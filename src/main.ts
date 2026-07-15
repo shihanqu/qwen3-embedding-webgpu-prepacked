@@ -11,7 +11,7 @@ import { getWorkload } from '../scripts/workloads.ts';
 
 const runButton = document.querySelector<HTMLButtonElement>('#run')!;
 const output = document.querySelector<HTMLElement>('#output')!;
-const DEFAULT_WEBGPU_MODEL_URL = 'https://github.com/shihanqu/qwen3-embedding-webgpu/releases/download/model-q4_0-v1/qwen3-embedding-0.6b-q4_0-webgpu.gguf';
+const DEFAULT_WEBGPU_MODEL_URL = '/model-release/qwen3-embedding-0.6b-q4_0-webgpu.gguf';
 
 function write(line: string): void {
   output.textContent += `\n${line}`;

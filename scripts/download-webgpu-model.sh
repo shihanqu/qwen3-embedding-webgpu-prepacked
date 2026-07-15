@@ -7,6 +7,15 @@ out="${QWEN3_WEBGPU_MODEL_PATH:-models/$filename}"
 expected_sha256="4acbfc4947344ca4d4a215ee35e601c5e6f505172b517da194460e2ff113433e"
 
 mkdir -p "$(dirname "$out")"
+
+if [[ -f "$out" ]]; then
+  existing_sha256="$(shasum -a 256 "$out" | awk '{print $1}')"
+  if [[ "$existing_sha256" == "$expected_sha256" ]]; then
+    echo "Model already present and verified: $out"
+    exit 0
+  fi
+fi
+
 curl --fail --location --continue-at - --progress-bar "$url" --output "$out"
 
 actual_sha256="$(shasum -a 256 "$out" | awk '{print $1}')"

@@ -36,7 +36,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173/?scheduler=1` and select **Load model & benchmark kernel**. The first load downloads the 364 MiB model from the GitHub Release, uploads its weights, downloads Qwen's tokenizer through Transformers.js, and compiles the WebGPU pipelines. Later executions can use the browser cache and reuse compiled plans.
+Open `http://127.0.0.1:5173/?scheduler=1` and select **Load model & benchmark kernel**. The first load downloads the 364 MiB model from the GitHub Release through Vite's same-origin release proxy, uploads its weights, downloads Qwen's tokenizer through Transformers.js, and compiles the WebGPU pipelines. Later executions can use the browser cache and reuse compiled plans.
 
 LM Studio is only required for comparison benchmarks. The WebGPU model itself runs entirely in the browser after its model and tokenizer have loaded.
 
@@ -76,7 +76,7 @@ import { Qwen3EmbeddingEngine, type TokenizerLike } from './src/webgpu/embedding
 import { Qwen3WebGPUModel } from './src/webgpu/model.ts';
 
 const { device } = await requestWebGPUDevice();
-const modelUrl = 'https://github.com/shihanqu/qwen3-embedding-webgpu/releases/download/model-q4_0-v1/qwen3-embedding-0.6b-q4_0-webgpu.gguf';
+const modelUrl = '/model-release/qwen3-embedding-0.6b-q4_0-webgpu.gguf';
 const bytes = await fetch(modelUrl).then((response) => response.arrayBuffer());
 const gguf = new GGUFReader(bytes).parse({ metadataKeys: QWEN3_METADATA_KEYS });
 const runtime = new Qwen3WebGPUModel(device, gguf);
@@ -173,7 +173,7 @@ npm run bench:baseline -- \
 
 ## Deployment notes
 
-- The production build downloads the pinned `model-q4_0-v1` GitHub Release asset by default. Set `VITE_Q40_MODEL_URL` at build time to use a same-origin copy or another CORS-accessible mirror.
+- Vite development and preview servers proxy `/model-release/` to the pinned `model-q4_0-v1` GitHub Release. For another production server, preserve that same-origin proxy route, or set `VITE_Q40_MODEL_URL` at build time to a same-origin copy or CORS-accessible mirror.
 - Preserve the `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` response headers from `vite.config.ts`.
 - The serving browser must expose WebGPU and `shader-f16`; the app fails early with a useful error when these are unavailable.
 - The current app is a development and benchmark console. Integrate `Qwen3EmbeddingEngine` into your own request or UI layer for production use.
