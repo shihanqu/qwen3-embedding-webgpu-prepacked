@@ -104,7 +104,7 @@ export class SwiGLUKernel {
 const qkNormRopeShader = /* wgsl */`
 enable f16;
 enable subgroups;
-struct Params { tokens: u32, sequence: u32, input_stride: u32, q_heads: u32, kv_heads: u32, _pad: u32, epsilon: f32, theta: f32 }
+struct Params { tokens: u32, sequence: u32, input_stride: u32, q_heads: u32, kv_heads: u32, dispatch_width: u32, epsilon: f32, theta: f32 }
 @group(0) @binding(0) var<storage, read> input: array<f16>;
 @group(0) @binding(1) var<storage, read> q_weight: array<f32>;
 @group(0) @binding(2) var<storage, read> k_weight: array<f32>;
@@ -115,7 +115,10 @@ var<workgroup> values: array<f32, 128>;
 var<workgroup> sums: array<f32, 128>;
 @compute @workgroup_size(128)
 fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) local: vec3<u32>, @builtin(subgroup_invocation_id) subgroup_lane: u32, @builtin(subgroup_id) subgroup_id: u32, @builtin(num_subgroups) num_subgroups: u32) {
-  let total_heads=params.q_heads+params.kv_heads; let token=group.x/total_heads; let combined_head=group.x%total_heads;
+  let linear_group=group.x+group.y*params.dispatch_width;
+  let total_heads=params.q_heads+params.kv_heads;
+  if(linear_group>=params.tokens*total_heads){return;}
+  let token=linear_group/total_heads; let combined_head=linear_group%total_heads;
   let is_q=combined_head<params.q_heads; let head=select(combined_head-params.q_heads,combined_head,is_q);
   let heads=select(params.kv_heads,params.q_heads,is_q);
   let d = local.x;
@@ -151,11 +154,13 @@ export class QKNormRopeKernel {
     this.pipeline = device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: qkNormRopeShader }), entryPoint: 'main' }, label: 'QK norm + RoPE' });
   }
   createRun(input: GPUBuffer, qWeight: GPUBuffer, kWeight: GPUBuffer, qOutput: GPUBuffer, kOutput: GPUBuffer, tokens: number, sequence: number, epsilon: number, theta: number, inputStride = 3072): EncodableRun {
-    const params = paramsBuffer(this.device, 32, (v) => { v.setUint32(0,tokens,true);v.setUint32(4,sequence,true);v.setUint32(8,inputStride,true);v.setUint32(12,16,true);v.setUint32(16,8,true);v.setFloat32(24,epsilon,true);v.setFloat32(28,theta,true); });
+    const groups = tokens * 24;
+    const dispatchWidth = Math.min(groups, this.device.limits.maxComputeWorkgroupsPerDimension);
+    const params = paramsBuffer(this.device, 32, (v) => { v.setUint32(0,tokens,true);v.setUint32(4,sequence,true);v.setUint32(8,inputStride,true);v.setUint32(12,16,true);v.setUint32(16,8,true);v.setUint32(20,dispatchWidth,true);v.setFloat32(24,epsilon,true);v.setFloat32(28,theta,true); });
     return { pipeline: this.pipeline, bindGroup: this.device.createBindGroup({ layout: this.pipeline.getBindGroupLayout(0), entries: [
       {binding:0,resource:{buffer:input}},{binding:1,resource:{buffer:qWeight}},{binding:2,resource:{buffer:kWeight}},
       {binding:3,resource:{buffer:qOutput}},{binding:4,resource:{buffer:kOutput}},{binding:5,resource:{buffer:params}},
-    ] }), dispatch: [tokens * 24] };
+    ] }), dispatch: [dispatchWidth, Math.ceil(groups / dispatchWidth)] };
   }
 }
 
@@ -262,9 +267,9 @@ export class CausalAttentionKernel {
     this.qkPipeline=device.createComputePipeline({layout:'auto',compute:{module:device.createShaderModule({code:qkScoreShader}),entryPoint:'main'},label:'tiled QK scores'});
     this.avPipeline=device.createComputePipeline({layout:'auto',compute:{module:device.createShaderModule({code:attentionValueShader}),entryPoint:'main'},label:'online-softmax attention values'});
   }
-  createRun(q:GPUBuffer,k:GPUBuffer,v:GPUBuffer,output:GPUBuffer,batch:number,sequence:number,qHeads=16,kvHeads=8,valueStride=1024,valueOffset=0):AttentionRun {
+  createRun(q:GPUBuffer,k:GPUBuffer,v:GPUBuffer,output:GPUBuffer,batch:number,sequence:number,qHeads=16,kvHeads=8,valueStride=1024,valueOffset=0,scoreWorkspace?:GPUBuffer):AttentionRun {
     const common=createBufferWithData(this.device,new Uint32Array([batch,sequence,qHeads,kvHeads,valueStride,valueOffset,0,0]),GPUBufferUsage.UNIFORM);
-    const scores=this.device.createBuffer({size:batch*qHeads*sequence*sequence*2,usage:GPUBufferUsage.STORAGE,label:'attention probabilities'});
+    const scores=scoreWorkspace??this.device.createBuffer({size:batch*qHeads*sequence*sequence*2,usage:GPUBufferUsage.STORAGE,label:'attention probabilities'});
     const qk:EncodableRun={pipeline:this.qkPipeline,bindGroup:this.device.createBindGroup({layout:this.qkPipeline.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:q}},{binding:1,resource:{buffer:k}},{binding:2,resource:{buffer:scores}},{binding:3,resource:{buffer:common}}]}),dispatch:[Math.ceil(sequence/16),Math.ceil(sequence/16),batch*qHeads]};
     const av:EncodableRun={pipeline:this.avPipeline,bindGroup:this.device.createBindGroup({layout:this.avPipeline.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:scores}},{binding:1,resource:{buffer:v}},{binding:2,resource:{buffer:output}},{binding:3,resource:{buffer:common}}]}),dispatch:[sequence,batch*qHeads]};
     return {qk,av};

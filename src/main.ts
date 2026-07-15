@@ -7,7 +7,7 @@ import { Qwen3EmbeddingEngine, type TokenizerLike } from './webgpu/embedding-eng
 import { QuantMatmulKernel } from './webgpu/quant-matmul.ts';
 import { CausalAttentionKernel, LastTokenPoolKernel, QKNormRopeKernel, RmsNormKernel, SwiGLUKernel } from './webgpu/ops.ts';
 import { Qwen3WebGPUModel } from './webgpu/model.ts';
-import { getWorkload } from '../scripts/workloads.ts';
+import { COMPARISON_TOKEN_COUNTS, getComparisonWorkload, getWorkload } from '../scripts/workloads.ts';
 import { parsePrepackedModel } from './prepacked/format.ts';
 
 const runButton = document.querySelector<HTMLButtonElement>('#run')!;
@@ -87,7 +87,7 @@ runButton.addEventListener('click', async () => {
     const prepacked = prepackedResponse ? parsePrepackedModel(await prepackedResponse.arrayBuffer()) : undefined;
     write(`Parsed ${model.metadata.get('general.name')}: ${model.tensors.size} tensors`);
     if (prepacked) write(`Parsed ${prepacked.tensors.size} prepacked ${prepacked.header.layout} matrices`);
-    const acceptanceOnly = searchParams.has('acceptance') || searchParams.has('hundred') || searchParams.has('profile') || searchParams.has('sweep') || searchParams.has('scheduler');
+    const acceptanceOnly = searchParams.has('acceptance') || searchParams.has('hundred') || searchParams.has('matrix') || searchParams.has('profile') || searchParams.has('sweep') || searchParams.has('scheduler');
     const skipMicrobenchmarks = acceptanceOnly || q40;
 
     if (!skipMicrobenchmarks) {
@@ -257,6 +257,47 @@ runButton.addEventListener('click', async () => {
       write(`Exact ${q40 ? 'Q4_0' : 'Q4_K_M'} llama.cpp agreement: ${q4Cosine.toFixed(6)}`);
       if (q4Cosine < 0.995) throw new Error(`exact-model cosine agreement ${q4Cosine} is below 0.995`);
     }
+    }
+
+    if (searchParams.has('matrix')) {
+      const matrixResults = [];
+      for (const exactTokens of COMPARISON_TOKEN_COUNTS) {
+        const benchmarkText = getComparisonWorkload(exactTokens).inputs[0];
+        const encoded = tokenizer(benchmarkText) as unknown as { input_ids: { tolist(): number[][] } };
+        const tokens = encoded.input_ids.tolist()[0].map(Number);
+        if (tokens[tokens.length - 1] !== 151643) tokens.push(151643);
+        if (tokens.length !== exactTokens) throw new Error(`expected ${exactTokens} tokens, tokenizer produced ${tokens.length}`);
+        const makeExactBatch = (batch: number) => {
+          const ids = new Uint32Array(batch * exactTokens);
+          for (let index = 0; index < batch; index += 1) ids.set(tokens, index * exactTokens);
+          return { ids, lengths: new Uint32Array(batch).fill(exactTokens) };
+        };
+
+        const singlePlan = runtime.createPlan(1, exactTokens);
+        const singleBatch = makeExactBatch(1);
+        const [reference] = await singlePlan.run(singleBatch.ids, singleBatch.lengths);
+        const singleRepeats = 10;
+        const singleStarted = performance.now();
+        for (let repeat = 0; repeat < singleRepeats; repeat += 1) await singlePlan.run(singleBatch.ids, singleBatch.lengths);
+        const singleRps = singleRepeats * 1000 / (performance.now() - singleStarted);
+
+        const concurrentPlan = runtime.createPlan(16, exactTokens);
+        const concurrentBatch = makeExactBatch(16);
+        const warmBatch = await concurrentPlan.run(concurrentBatch.ids, concurrentBatch.lengths);
+        const worstBatchCosine = Math.min(...warmBatch.map((embedding) => reference.reduce((sum, value, index) => sum + value * embedding[index], 0)));
+        const cosineFloor = exactTokens >= 500 ? 0.98 : 0.999;
+        if (worstBatchCosine < cosineFloor) throw new Error(`${exactTokens}-token batch cosine ${worstBatchCosine} is below ${cosineFloor}`);
+        const concurrentRepeats = 5;
+        const concurrentStarted = performance.now();
+        for (let repeat = 0; repeat < concurrentRepeats; repeat += 1) await concurrentPlan.run(concurrentBatch.ids, concurrentBatch.lengths);
+        const aggregateRps = concurrentRepeats * 16_000 / (performance.now() - concurrentStarted);
+        const result = { exactTokens, singleRps, aggregateRps, scaling: aggregateRps / singleRps, worstBatchCosine };
+        matrixResults.push(result);
+        write(`${exactTokens} tokens: ${singleRps.toFixed(2)} req/s single; ${aggregateRps.toFixed(2)} req/s at 16 concurrent; ${(aggregateRps / singleRps).toFixed(2)}× scaling`);
+      }
+      write(`BENCHMARK_MATRIX_JSON ${JSON.stringify(matrixResults)}`);
+      write('Benchmark complete');
+      return;
     }
 
     const acceptanceText = getWorkload(searchParams.has('hundred') ? 'hundred' : 'acceptance').inputs[0];

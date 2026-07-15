@@ -1,6 +1,6 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 import { benchmarkTarget, printResults, type BenchmarkTarget } from './bench-lib.ts';
-import { getWorkload, type WorkloadName } from './workloads.ts';
+import { getComparisonWorkload, getWorkload, type ComparisonTokenCount, type WorkloadName } from './workloads.ts';
 
 function readArgument(name: string, fallback: string): string {
   const prefix = `--${name}=`;
@@ -9,7 +9,10 @@ function readArgument(name: string, fallback: string): string {
 
 const endpoint = readArgument('endpoint', 'http://127.0.0.1:1234/v1/embeddings');
 const model = readArgument('model', 'text-embedding-qwen3-embedding-0.6b');
-const workload = getWorkload(readArgument('workload', 'acceptance') as WorkloadName);
+const exactTokensArgument = process.argv.find((argument) => argument.startsWith('--tokens='))?.slice('--tokens='.length);
+const workload = exactTokensArgument
+  ? getComparisonWorkload(Number(exactTokensArgument) as ComparisonTokenCount)
+  : getWorkload(readArgument('workload', 'acceptance') as WorkloadName);
 const durationMs = Number(readArgument('duration-ms', '10000'));
 const warmupRequests = Number(readArgument('warmup', '3'));
 const concurrencies = readArgument('concurrency', '1,2,4,8,16').split(',').map(Number);

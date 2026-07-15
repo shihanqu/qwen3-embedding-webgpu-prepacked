@@ -6,6 +6,9 @@ export interface Workload {
   inputs: string[];
 }
 
+export const COMPARISON_TOKEN_COUNTS = [15, 50, 150, 500] as const;
+export type ComparisonTokenCount = typeof COMPARISON_TOKEN_COUNTS[number];
+
 const seedSentences = [
   'A red fox crosses the quiet trail while the morning fog lifts from the valley.',
   'Vector search maps related passages nearby even when they use different vocabulary.',
@@ -13,7 +16,26 @@ const seedSentences = [
   'WebGPU dispatches compute work to the graphics processor without a native extension.',
 ];
 
+const comparisonSeed = seedSentences.join(' ');
+const comparisonWordCounts: Record<ComparisonTokenCount, number> = {
+  15: 14,
+  50: 44,
+  150: 135,
+  500: 446,
+};
+
 const exactHundredTokenInput = 'A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox';
+
+export function getComparisonWorkload(tokens: ComparisonTokenCount): Workload {
+  const words = comparisonSeed.split(/\s+/);
+  const wordCount = comparisonWordCounts[tokens];
+  if (!wordCount) throw new Error(`unsupported exact-token comparison fixture: ${tokens}`);
+  return {
+    name: 'acceptance',
+    nominalTokens: tokens,
+    inputs: [Array.from({ length: wordCount }, (_, index) => words[index % words.length]).join(' ')],
+  };
+}
 
 function repeatToNominalTokens(sentence: string, tokens: number): string {
   // Stable English prose averages close to 1.3 tokenizer tokens per whitespace word

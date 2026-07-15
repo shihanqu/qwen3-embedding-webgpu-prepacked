@@ -69,6 +69,7 @@ export class Qwen3ExecutionPlan {
     const delta = activationBuffer(device, tokens * HIDDEN, 'residual delta');
     const gateUp = activationBuffer(device, tokens * INTERMEDIATE * 2, 'FFN gate + up');
     const ffn = activationBuffer(device, tokens * INTERMEDIATE, 'SwiGLU output');
+    const attentionScores = activationBuffer(device, batch * 16 * sequence * sequence, 'shared attention score workspace');
     this.embeddings = activationBuffer(device, batch * HIDDEN, 'embeddings', true);
     this.readback = device.createBuffer({ size: batch * HIDDEN * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ, label: 'embedding readback' });
 
@@ -80,7 +81,7 @@ export class Qwen3ExecutionPlan {
       const qkRun = model.matmul(normalized, `${prefix}.attn_qk.weight`, tokens, qkRaw);
       const vRun = model.matmul(normalized, `${prefix}.attn_v.weight`, tokens, v);
       const qkRope = model.qkNormRope.createRun(qkRaw, model.weight(`${prefix}.attn_q_norm.weight`), model.weight(`${prefix}.attn_k_norm.weight`), q, k, tokens, sequence, EPSILON, ROPE_THETA);
-      const attentionRun = model.attention.createRun(q, k, v, attention, batch, sequence);
+      const attentionRun = model.attention.createRun(q, k, v, attention, batch, sequence, 16, 8, 1024, 0, attentionScores);
       const attentionOutput = model.matmul(attention, `${prefix}.attn_output.weight`, tokens, delta);
       const postAttentionNorm = model.rmsNorm.createRun(x, delta, model.weight(`${prefix}.ffn_norm.weight`), normalized, tokens, HIDDEN, EPSILON, true);
       const gateUpRun = model.matmul(normalized, `${prefix}.ffn_gate_up.weight`, tokens, gateUp);
