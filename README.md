@@ -1,202 +1,145 @@
-# Qwen3 Embedding 0.6B on WebGPU
+# Qwen3 Embedding 0.6B: prepacked WebGPU experiment
 
-A complete, browser-native Qwen3 Embedding 0.6B runtime built from custom WGSL kernels. It loads a GGUF model directly, runs all 28 transformer layers on WebGPU, and micro-batches up to 16 simultaneous embedding requests.
+An experimental fork of [`qwen3-embedding-webgpu`](https://github.com/shihanqu/qwen3-embedding-webgpu) that moves Q4_0 repacking out of browser startup and into an offline, GPU-native model artifact. It uses custom WGSL for both low-latency inference and batches of up to 16 requests.
 
-The implementation does **not** delegate inference to ONNX Runtime. Quantized projection, embedding lookup, RMSNorm/residual, Q/K normalization and RoPE, causal attention, SwiGLU, and last-token L2 normalization are implemented in this repository.
+The original repository is unchanged. This fork is intentionally separate so the custom format can evolve without breaking the normal GGUF implementation.
 
-![WebGPU and LM Studio benchmark comparison](docs/lm-studio-comparison.svg)
+![Exact 100-token throughput comparison](docs/prepacked-100-token-comparison.svg)
 
-## Required model
+## Results
 
-The app uses this exact release asset by default:
+Exact same-text 100-token requests, including EOS, were measured after model upload and pipeline warmup:
 
-| Property | Value |
+| Runtime | Single stream | 16-request aggregate | Batch/single |
+|---|---:|---:|---:|
+| LM Studio local endpoint | 20.55 req/s | 21.40 req/s | 1.04× |
+| Existing WebGPU GGUF path | 27.53 req/s | 42.55 req/s | 1.55× |
+| **Prepacked WebGPU** | **33.37 req/s** | **56.12 req/s** | **1.68×** |
+
+The prepacked path is 62.4% faster than LM Studio for single-stream requests and 162.2% faster at concurrency 16. Relative to the existing WebGPU GGUF path, it is 21.2% faster single-stream and 31.9% faster at concurrency 16.
+
+Correctness was checked against the same Q4_0 GGUF path: cosine similarity is `0.999936`. The batch and single prepacked paths agree at cosine `1.000000`.
+
+### Test hardware
+
+| Component | Configuration |
 |---|---|
-| Release asset | [`qwen3-embedding-0.6b-q4_0-webgpu.gguf`](https://github.com/shihanqu/qwen3-embedding-webgpu/releases/download/model-q4_0-v1/qwen3-embedding-0.6b-q4_0-webgpu.gguf) |
-| Quantization | GGUF Q4_0; token embeddings remain Q6_K, as selected by llama.cpp |
-| Source | [Qwen/Qwen3-Embedding-0.6B-GGUF](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF), file `Qwen3-Embedding-0.6B-f16.gguf` |
-| Generated size | 381,335,744 bytes (364 MiB) |
-| SHA-256 | `4acbfc4947344ca4d4a215ee35e601c5e6f505172b517da194460e2ff113433e` |
+| Computer | MacBook Pro `Mac15,10` |
+| SoC / GPU | Apple M3 Max, 30-core GPU |
+| CPU | 14 cores (10 performance, 4 efficiency) |
+| Memory | 96 GB unified memory |
+| OS | macOS 26.5.2, build 25F84 |
+| Browser | Chromium WebGPU with `shader-f16`, subgroups, and timestamp queries |
+| LM Studio API | `text-embedding-qwen3-embedding-0.6b` at `127.0.0.1:1234` |
 
-The 364 MiB weight file is attached to the [`model-q4_0-v1` GitHub Release](https://github.com/shihanqu/qwen3-embedding-webgpu/releases/tag/model-q4_0-v1), rather than stored in normal Git history. Its [artifact notice](MODEL_NOTICE.md), [Apache-2.0 model license](MODEL_LICENSE), and [checksum](docs/model-q4_0-v1.sha256) are checked into the repository and attached to the release.
+Numbers are hardware-, browser-, power-, and thermal-state-dependent. Run the included benchmark on the target system rather than treating these figures as universal.
+
+## Required model files
+
+The app needs both artifacts and loads their pinned GitHub Releases by default:
+
+| Artifact | Purpose | Size | SHA-256 / source |
+|---|---|---:|---|
+| [`qwen3-embedding-0.6b-q4_0-webgpu.gguf`](https://github.com/shihanqu/qwen3-embedding-webgpu/releases/download/model-q4_0-v1/qwen3-embedding-0.6b-q4_0-webgpu.gguf) | GGUF metadata, token embeddings, norm weights, and source identity | 364 MiB | `4acbfc4947344ca4d4a215ee35e601c5e6f505172b517da194460e2ff113433e` |
+| [`qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack`](https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/prepacked-v1/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack) | 140 prepacked Q4_0 projection matrices | 420 MiB | [`52c4b6…d24b3`](docs/prepacked-v1.sha256); header pins the GGUF SHA-256 above |
+
+The `.wgpack` file is a derived representation, not a second independent model. The loader verifies its format and exposes the source GGUF hash in the parsed header. Model licensing remains Apache-2.0; source code is MIT.
 
 ## Quick start
 
-### 1. Prerequisites
+Requirements:
 
 - Node.js 24 or newer and npm.
-- Chrome, Edge, or another Chromium browser with WebGPU, `shader-f16`, and subgroup support enabled.
-
-### 2. Install and run
+- A Chromium browser exposing WebGPU, `shader-f16`, and subgroup operations.
+- Roughly 1 GB of available GPU/shared memory for weights and working buffers.
 
 ```sh
-git clone https://github.com/shihanqu/qwen3-embedding-webgpu.git
-cd qwen3-embedding-webgpu
+git clone https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked.git
+cd qwen3-embedding-webgpu-prepacked
 npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173/?scheduler=1` and select **Load model & benchmark kernel**. The first load downloads the 364 MiB model from the GitHub Release through Vite's same-origin release proxy, uploads its weights, downloads Qwen's tokenizer through Transformers.js, and compiles the WebGPU pipelines. Later executions can use the browser cache and reuse compiled plans.
+Open `http://127.0.0.1:5173/?hundred=1`, click **Load model & benchmark kernel**, and look for `BENCHMARK_JSON` in the page output. Vite proxies both release assets through the local origin, avoiding cross-origin model-loading problems.
 
-LM Studio is only required for comparison benchmarks. The WebGPU model itself runs entirely in the browser after its model and tokenizer have loaded.
-
-### Local or offline model copy
-
-Download and checksum-verify the release asset into `models/`:
+For local or offline copies:
 
 ```sh
 npm run model:download:webgpu
-VITE_Q40_MODEL_URL=/models/qwen3-embedding-0.6b-q4_0-webgpu.gguf npm run dev
+curl -L \
+  -o models/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack \
+  https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/prepacked-v1/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack
+
+VITE_Q40_MODEL_URL=/models/qwen3-embedding-0.6b-q4_0-webgpu.gguf \
+VITE_PREPACKED_MODEL_URL=/models/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack \
+  npm run dev
 ```
 
-`VITE_Q40_MODEL_URL` can point to any CORS-accessible mirror or same-origin path. The optional `model:download:q4km` script downloads a higher-quality Q4_K_M model for experiments; launch the app with `?q4km=1` to use it. That alternate model is not used for the published benchmark numbers.
+Add `&gguf=1` to any benchmark URL to disable the custom artifact and run the existing GGUF path.
 
-### Reproduce the release artifact
+## Generate the prepacked artifact
 
-To regenerate the file, build [`llama-quantize`](https://github.com/ggml-org/llama.cpp) from a recent llama.cpp checkout, then quantize directly from Qwen's official f16 model. Do not re-quantize an existing Q4 model: double quantization materially reduces embedding agreement.
+First place the exact Q4_0 source model in `models/`, then run:
 
 ```sh
-LLAMA_QUANTIZE=/absolute/path/to/llama-quantize \
-  npm run model:prepare:q40
-
-shasum -a 256 models/qwen3-embedding-0.6b-q4_0-webgpu.gguf
+npm ci
+npm run model:prepack -- \
+  models/qwen3-embedding-0.6b-q4_0-webgpu.gguf \
+  models/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack
 ```
 
-The preparation script downloads the official 1.2 GB f16 GGUF if it is absent, then writes the renamed WebGPU artifact under `models/`. You can instead set `QWEN3_F16_PATH=/path/to/model.gguf`.
+The generator is deterministic. It reads GGUF tensor metadata, fuses Q+K and gate+up matrices, writes all Q4 projections in GPU tile order, records the source SHA-256, and aligns every tensor to 256 bytes.
 
-## Request API
+The format is deliberately simple:
 
-`Qwen3EmbeddingEngine.embed()` is the request-facing API. Calls made during the same scheduling window are padded after EOS, combined into a batch of at most 16, executed with a cached plan, and resolved in their original order.
+- 8-byte `WGPACK01` magic, a JSON header, then 256-byte-aligned tensor payloads.
+- Output rows are grouped in 32-row tiles; K is grouped in 32-value Q4 blocks.
+- Each aligned `u32` contains four already-reordered Q4 nibbles in its low 16 bits and their FP16 block scale in its high 16 bits.
+- The browser uploads the payload directly. It does not concatenate Q/K or gate/up tensors and does not repack Q4 nibbles on the CPU.
 
-```ts
-import { AutoTokenizer } from '@huggingface/transformers';
-import { GGUFReader, QWEN3_METADATA_KEYS } from './src/gguf/reader.ts';
-import { requestWebGPUDevice } from './src/webgpu/device.ts';
-import { Qwen3EmbeddingEngine, type TokenizerLike } from './src/webgpu/embedding-engine.ts';
-import { Qwen3WebGPUModel } from './src/webgpu/model.ts';
+This representation is larger than the source Q4 matrices because the scale is repeated for vector-native one-load decoding. Experiments with more compact and f16-expanded layouts were slower on the test GPU.
 
-const { device } = await requestWebGPUDevice();
-const modelUrl = '/model-release/qwen3-embedding-0.6b-q4_0-webgpu.gguf';
-const bytes = await fetch(modelUrl).then((response) => response.arrayBuffer());
-const gguf = new GGUFReader(bytes).parse({ metadataKeys: QWEN3_METADATA_KEYS });
-const runtime = new Qwen3WebGPUModel(device, gguf);
-const tokenizer = await AutoTokenizer.from_pretrained('Qwen/Qwen3-Embedding-0.6B');
-const embeddings = new Qwen3EmbeddingEngine(runtime, tokenizer as unknown as TokenizerLike, 16);
+## Reproduce benchmarks
 
-const one = await embeddings.embed('A semantic search query');
-const sixteen = await Promise.all(
-  Array.from({ length: 16 }, (_, index) => embeddings.embed(`Query ${index}`)),
-);
-```
+Browser modes:
 
-Each result is a normalized `Float32Array(1024)`.
+- `?hundred=1` — ten warmed single requests and five warmed 16-request batches at exactly 100 tokens.
+- `?hundred=1&gguf=1` — same benchmark through the existing GGUF path.
+- `?hundred=1&vector=1` — additionally prints the 1,024-value reference vector for cosine comparison.
+- `?hundred=1&profile=1` or `profile=16` — per-stage GPU timestamp profile.
+- `?hundred=1&batchsweep=1` — adds batch sizes 2, 4, and 8.
 
-## Reproducing the LM Studio comparison
-
-1. In LM Studio, load the embedding model whose API identifier is exactly `text-embedding-qwen3-embedding-0.6b`.
-2. Start LM Studio's OpenAI-compatible local server on `http://127.0.0.1:1234`.
-3. Prepare the clean Q4_0 model and start this project with `npm run dev`.
-4. Open one of the benchmark URLs below and press the button.
-
-If LM Studio is on another host or port, start Vite with an override:
-
-```sh
-LM_STUDIO_URL=http://127.0.0.1:1234 npm run dev
-```
-
-Benchmark modes:
-
-- `?scheduler=1` — end-to-end scheduler benchmark through 16 simultaneous `embed()` calls.
-- `?sweep=1` — warmed 1/2/4/8/16 sweep at 6, 17, 26, and 105 exact tokenizer tokens.
-- `?profile=16` — per-stage GPU timestamps for a 16-request batch.
-- `/` — full correctness check and the 105-token stress case.
-
-The default correctness page can optionally compare against llama.cpp running the exact same Q4_0 file:
-
-```sh
-llama-server \
-  -m models/qwen3-embedding-0.6b-q4_0-webgpu.gguf \
-  --embedding --pooling last -ngl 99 \
-  --host 127.0.0.1 --port 1236
-```
-
-Set `Q4_0_REFERENCE_URL` when that server uses a different address.
-
-## Published benchmark
-
-WebGPU measurements were collected July 14, 2026. The matching LM Studio concurrency runs were collected July 15, 2026 on the same machine:
-
-| Component | Tested configuration |
-|---|---|
-| Computer | MacBook Pro, model identifier Mac15,10 |
-| SoC | Apple M3 Max |
-| CPU | 14 cores: 10 performance and 4 efficiency |
-| GPU | 30-core Apple GPU |
-| Memory | 96 GB unified memory |
-| OS | macOS 26.5.2, build 25F84 |
-| Browser API | Chromium WebGPU with `shader-f16`, subgroups, and timestamp queries |
-| llama.cpp | Build b10015 for quantization and exact-model validation |
-| WebGPU model | Clean f16 → Q4_0 conversion described above |
-| LM Studio model | `text-embedding-qwen3-embedding-0.6b` at `127.0.0.1:1234` |
-
-| Exact tokens | WebGPU single | LM Studio single | WebGPU / LM single | WebGPU at 16 concurrent | LM Studio at 16 concurrent | WebGPU / LM at 16 |
-|---:|---:|---:|---:|---:|---:|---:|
-| 6 | 57.33 req/s | 32.22 req/s | **1.78×** | 461.03 req/s | 31.12 req/s | **14.82×** |
-| 17 | 51.06 req/s | 28.48 req/s | 1.79× | 186.22 req/s | 30.51 req/s | 6.10× |
-| 26 | 49.44 req/s | 29.13 req/s | 1.70× | 130.54 req/s | 31.21 req/s | 4.18× |
-| 105 | 25.65 req/s | 20.55 req/s | 1.25× | 38.41 req/s | 21.66 req/s | 1.77× |
-
-LM Studio was tested with 16 independent HTTP workers against the same text used for each WebGPU row. After 10 warmup requests, each condition ran for 10 seconds; the 6-token condition ran for 15 seconds. There were no request errors. LM Studio's aggregate throughput at concurrency 16 remained close to its single-request throughput, while per-request latency rose to roughly 0.5–0.7 seconds.
-
-The WebGPU output agrees with llama.cpp running the exact same clean Q4_0 GGUF at cosine `0.999995`. Batch output agrees with the single path at cosine `1.000000` for the 6-token case. Cosine against a separately quantized LM Studio model is not an implementation correctness comparison.
-
-Raw chart data is checked in at [`docs/benchmarks/2026-07-14-m3-max.json`](docs/benchmarks/2026-07-14-m3-max.json). Regenerate the README graph with `npm run bench:chart`.
-
-## Benchmark methodology
-
-- Record exact Qwen tokenizer length, including EOS; do not rely on word-count estimates.
-- Separate cold model download, GPU upload, and pipeline compilation from warmed inference.
-- Use identical text and sequential requests for the LM Studio single-stream baseline.
-- For LM Studio concurrency, issue independent HTTP requests from 16 workers rather than sending a single array-valued request.
-- Sweep concurrency 1, 2, 4, 8, and 16 instead of reporting only the best batch.
-- Report both batch latency and aggregate requests per second.
-- Compare each batch embedding against the single-request output.
-- Keep sequence-length results separate because GPU occupancy and attention cost change substantially with length.
-
-Reproduce the 6-token LM Studio run with:
+Run the identical LM Studio HTTP benchmark with 16 independent workers:
 
 ```sh
 npm run bench:baseline -- \
-  --workload=tiny --concurrency=1,16 \
-  --duration-ms=15000 --warmup=10
+  --workload=hundred --input-index=0 \
+  --concurrency=1,16 --duration-ms=5000 --warmup=2
 ```
 
-## Deployment notes
+The exact workload lives in `scripts/workloads.ts`. Do not compare different text, tokenizer lengths, array-valued endpoint batching, or cold model-load time.
 
-- Vite development and preview servers proxy `/model-release/` to the pinned `model-q4_0-v1` GitHub Release. For another production server, preserve that same-origin proxy route, or set `VITE_Q40_MODEL_URL` at build time to a same-origin copy or CORS-accessible mirror.
-- Preserve the `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` response headers from `vite.config.ts`.
-- The serving browser must expose WebGPU and `shader-f16`; the app fails early with a useful error when these are unavailable.
-- The current app is a development and benchmark console. Integrate `Qwen3EmbeddingEngine` into your own request or UI layer for production use.
+The three final browser trials and comparison inputs are recorded in [`docs/benchmarks/2026-07-15-prepacked-m3-max.json`](docs/benchmarks/2026-07-15-prepacked-m3-max.json).
+
+## Portability
+
+The implementation targets WebGPU rather than Apple-, NVIDIA-, or AMD-specific shader code. The format contains no machine ISA and the kernels are WGSL, so the design is GPU-vendor agnostic in that sense. It is not accurate to promise identical behavior or speed on every GPU: the current kernels require `shader-f16` and subgroups, browser support varies, subgroup size and memory behavior differ, and this release was tested only on Apple M3 Max. NVIDIA and AMD systems meeting those WebGPU feature requirements are expected to work, but should be validated with `npm run check`, the exact-token benchmark, and cosine comparison.
 
 ## Development
 
 ```sh
-npm ci
 npm run check
-npm run bench:chart
 ```
-
-GitHub Actions runs the unit tests and production build on every push and pull request. Unit coverage includes GGUF quantization decoding and concurrent scheduler batching/order behavior.
 
 Key files:
 
-- `src/webgpu/quant-matmul.ts` — Q4_0, Q4_K, and Q6_K fused projection kernels.
-- `src/webgpu/ops.ts` — transformer operation kernels.
-- `src/webgpu/model.ts` — full 28-layer execution plans.
-- `src/webgpu/embedding-engine.ts` — concurrent request micro-batching API.
-- `src/gguf/` — GGUF metadata and tensor parsing.
-- `scripts/workloads.ts` — reproducible benchmark inputs.
+- `src/prepacked/format.ts` — format writer/parser and source-hash metadata.
+- `scripts/prepack-model.ts` — deterministic GGUF-to-`.wgpack` generator.
+- `src/webgpu/quant-matmul.ts` — dense 64-wide single path and subgroup 16-request path.
+- `src/webgpu/model.ts` — direct prepacked uploads and execution plans.
+- `src/webgpu/ops.ts` — subgroup reductions and online causal attention.
+- `tests/prepacked-format.test.ts` — byte-layout and parser test.
 
 ## License
 
-The source code is available under the [MIT License](LICENSE). The released Qwen model artifact retains its upstream Apache-2.0 terms; see the [model license](MODEL_LICENSE) and [artifact notice](MODEL_NOTICE.md).
+Source code is [MIT licensed](LICENSE). Qwen model artifacts retain their upstream [Apache-2.0 terms](MODEL_LICENSE); see [MODEL_NOTICE.md](MODEL_NOTICE.md).

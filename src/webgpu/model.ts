@@ -1,6 +1,7 @@
 import type { GGUFModel, GGUFTensorInfo } from '../gguf/types.ts';
 import { GGMLType } from '../gguf/types.ts';
 import { createBufferWithData } from './device.ts';
+import type { PrepackedModel } from '../prepacked/format.ts';
 import { QuantMatmulKernel, type QuantMatmulRun } from './quant-matmul.ts';
 import {
   CausalAttentionKernel,
@@ -46,6 +47,7 @@ export class Qwen3ExecutionPlan {
   readonly tokenIds: GPUBuffer;
   readonly lengths: GPUBuffer;
   readonly embeddings: GPUBuffer;
+  readonly readback: GPUBuffer;
   readonly initialEmbedding: EncodableRun;
   readonly initialNorm: EncodableRun;
   readonly layers: LayerRuns[] = [];
@@ -68,6 +70,7 @@ export class Qwen3ExecutionPlan {
     const gateUp = activationBuffer(device, tokens * INTERMEDIATE * 2, 'FFN gate + up');
     const ffn = activationBuffer(device, tokens * INTERMEDIATE, 'SwiGLU output');
     this.embeddings = activationBuffer(device, batch * HIDDEN, 'embeddings', true);
+    this.readback = device.createBuffer({ size: batch * HIDDEN * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ, label: 'embedding readback' });
 
     this.initialEmbedding = model.embedding.createRun(this.tokenIds, model.weight('token_embd.weight'), x, tokens);
     this.initialNorm = model.rmsNorm.createRun(x, noResidual, model.weight('blk.0.attn_norm.weight'), normalized, tokens, HIDDEN, EPSILON, false);
@@ -82,8 +85,8 @@ export class Qwen3ExecutionPlan {
       const postAttentionNorm = model.rmsNorm.createRun(x, delta, model.weight(`${prefix}.ffn_norm.weight`), normalized, tokens, HIDDEN, EPSILON, true);
       const gateUpRun = model.matmul(normalized, `${prefix}.ffn_gate_up.weight`, tokens, gateUp);
       const swiglu = model.swiglu.createRun(gateUp, ffn, tokens, INTERMEDIATE);
-      const downRun = model.matmul(ffn, `${prefix}.ffn_down.weight`, tokens, delta);
       const nextNormName = layer + 1 < LAYERS ? `blk.${layer + 1}.attn_norm.weight` : 'output_norm.weight';
+      const downRun = model.matmul(ffn, `${prefix}.ffn_down.weight`, tokens, delta);
       const postFfnNorm = model.rmsNorm.createRun(x, delta, model.weight(nextNormName), normalized, tokens, HIDDEN, EPSILON, true);
       this.layers.push({ qk: qkRun, v: vRun, qkRope, attention: attentionRun, attentionOutput, postAttentionNorm, gateUp: gateUpRun, swiglu, down: downRun, postFfnNorm });
     }
@@ -111,12 +114,11 @@ export class Qwen3ExecutionPlan {
     }
     encodeRun(pass, this.pool);
     pass.end();
-    const readback = this.model.device.createBuffer({ size: this.batch * HIDDEN * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    encoder.copyBufferToBuffer(this.embeddings, 0, readback, 0, this.batch * HIDDEN * 4);
+    encoder.copyBufferToBuffer(this.embeddings, 0, this.readback, 0, this.batch * HIDDEN * 4);
     this.model.device.queue.submit([encoder.finish()]);
-    await readback.mapAsync(GPUMapMode.READ);
-    const flat = new Float32Array(readback.getMappedRange().slice(0));
-    readback.destroy();
+    await this.readback.mapAsync(GPUMapMode.READ);
+    const flat = new Float32Array(this.readback.getMappedRange().slice(0));
+    this.readback.unmap();
     return Array.from({ length: this.batch }, (_, index) => flat.slice(index * HIDDEN, (index + 1) * HIDDEN));
   }
 
@@ -169,6 +171,7 @@ export class Qwen3WebGPUModel {
   readonly tensorInfo = new Map<string, GGUFTensorInfo>();
   readonly q4: QuantMatmulKernel;
   readonly q40: QuantMatmulKernel;
+  readonly q40Prepacked: QuantMatmulKernel;
   readonly q6: QuantMatmulKernel;
   readonly rmsNorm: RmsNormKernel;
   readonly swiglu: SwiGLUKernel;
@@ -176,18 +179,37 @@ export class Qwen3WebGPUModel {
   readonly attention: CausalAttentionKernel;
   readonly pool: LastTokenPoolKernel;
   readonly embedding: EmbeddingLookupKernel;
+  readonly prepackedNames = new Set<string>();
 
-  constructor(readonly device: GPUDevice, gguf: GGUFModel) {
+  constructor(readonly device: GPUDevice, gguf: GGUFModel, prepacked?: PrepackedModel) {
     this.q4 = new QuantMatmulKernel(device, GGMLType.Q4_K);
     this.q40 = new QuantMatmulKernel(device, GGMLType.Q4_0);
+    this.q40Prepacked = new QuantMatmulKernel(device, GGMLType.Q4_0, 'q4_0-tile32');
     this.q6 = new QuantMatmulKernel(device, GGMLType.Q6_K);
     this.rmsNorm = new RmsNormKernel(device); this.swiglu = new SwiGLUKernel(device);
     this.qkNormRope = new QKNormRopeKernel(device); this.attention = new CausalAttentionKernel(device);
     this.pool = new LastTokenPoolKernel(device); this.embedding = new EmbeddingLookupKernel(device);
     for (const tensor of gguf.tensors.values()) {
+      if (prepacked && tensor.type === GGMLType.Q4_0 && tensor.dimensions.length === 2) continue;
       const bytes = new Uint8Array(gguf.buffer, tensor.byteOffset, tensor.byteLength);
       this.weights.set(tensor.name, createBufferWithData(device, bytes, GPUBufferUsage.STORAGE, tensor.name));
       this.tensorInfo.set(tensor.name, tensor);
+    }
+    if (prepacked) {
+      for (const tensor of prepacked.tensors.values()) {
+        const bytes = new Uint8Array(prepacked.buffer, tensor.byteOffset, tensor.byteLength);
+        this.weights.set(tensor.name, createBufferWithData(device, bytes, GPUBufferUsage.STORAGE, tensor.name));
+        this.tensorInfo.set(tensor.name, {
+          name: tensor.name,
+          dimensions: [tensor.k, tensor.n],
+          type: GGMLType.Q4_0,
+          offset: tensor.offset,
+          byteOffset: tensor.byteOffset,
+          byteLength: tensor.byteLength,
+          elementCount: tensor.k * tensor.n,
+        });
+        this.prepackedNames.add(tensor.name);
+      }
     }
     const combineQ4 = (name: string, firstName: string, secondName: string) => {
       const first = gguf.tensors.get(firstName); const second = gguf.tensors.get(secondName);
@@ -200,9 +222,13 @@ export class Qwen3WebGPUModel {
       this.weights.set(name, createBufferWithData(device, bytes, GPUBufferUsage.STORAGE, name));
       this.tensorInfo.set(name, { name, dimensions: [first.dimensions[0], first.dimensions[1] + second.dimensions[1]], type: first.type, offset: 0, byteOffset: 0, byteLength: bytes.byteLength, elementCount: first.elementCount + second.elementCount });
     };
-    for (let layer = 0; layer < LAYERS; layer += 1) {
-      combineQ4(`blk.${layer}.attn_qk.weight`, `blk.${layer}.attn_q.weight`, `blk.${layer}.attn_k.weight`);
-      combineQ4(`blk.${layer}.ffn_gate_up.weight`, `blk.${layer}.ffn_gate.weight`, `blk.${layer}.ffn_up.weight`);
+    if (!prepacked) {
+      for (let layer = 0; layer < LAYERS; layer += 1) {
+        combineQ4(`blk.${layer}.attn_qk.weight`, `blk.${layer}.attn_q.weight`, `blk.${layer}.attn_k.weight`);
+        combineQ4(`blk.${layer}.ffn_gate_up.weight`, `blk.${layer}.ffn_gate.weight`, `blk.${layer}.ffn_up.weight`);
+      }
+    } else if (this.prepackedNames.size !== LAYERS * 5) {
+      throw new Error(`prepacked model has ${this.prepackedNames.size} matrices; expected ${LAYERS * 5}`);
     }
   }
 
@@ -216,12 +242,13 @@ export class Qwen3WebGPUModel {
     const info = this.tensorInfo.get(weightName);
     if (!info || info.dimensions.length !== 2) throw new Error(`invalid matrix ${weightName}`);
     const [k, n] = info.dimensions;
-    const kernel = info.type===GGMLType.Q4_0?this.q40:info.type === GGMLType.Q4_K ? this.q4 : info.type === GGMLType.Q6_K ? this.q6 : undefined;
+    const kernel = this.prepackedNames.has(weightName) ? this.q40Prepacked : info.type===GGMLType.Q4_0?this.q40:info.type === GGMLType.Q4_K ? this.q4 : info.type === GGMLType.Q6_K ? this.q6 : undefined;
     if (!kernel) throw new Error(`unsupported matrix type ${info.type} for ${weightName}`);
     return kernel.createRunFromBuffers(input, this.weight(weightName), rows, n, k, output);
   }
 
   kernelFor(run: QuantMatmulRun): QuantMatmulKernel {
+    if(run.pipeline===this.q40Prepacked.latencyPipeline||run.pipeline===this.q40Prepacked.throughputPipeline||run.pipeline===this.q40Prepacked.midBatchPipeline||run.pipeline===this.q40Prepacked.batchPipeline||run.pipeline===this.q40Prepacked.subgroupPipeline)return this.q40Prepacked;
     if(run.pipeline===this.q40.latencyPipeline||run.pipeline===this.q40.throughputPipeline||run.pipeline===this.q40.midBatchPipeline||run.pipeline===this.q40.batchPipeline)return this.q40;
     return run.pipeline === this.q4.latencyPipeline || run.pipeline === this.q4.throughputPipeline || run.pipeline === this.q4.midBatchPipeline || run.pipeline === this.q4.batchPipeline ? this.q4 : this.q6;
   }

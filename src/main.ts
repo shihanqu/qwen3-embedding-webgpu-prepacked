@@ -8,10 +8,12 @@ import { QuantMatmulKernel } from './webgpu/quant-matmul.ts';
 import { CausalAttentionKernel, LastTokenPoolKernel, QKNormRopeKernel, RmsNormKernel, SwiGLUKernel } from './webgpu/ops.ts';
 import { Qwen3WebGPUModel } from './webgpu/model.ts';
 import { getWorkload } from '../scripts/workloads.ts';
+import { parsePrepackedModel } from './prepacked/format.ts';
 
 const runButton = document.querySelector<HTMLButtonElement>('#run')!;
 const output = document.querySelector<HTMLElement>('#output')!;
 const DEFAULT_WEBGPU_MODEL_URL = '/model-release/qwen3-embedding-0.6b-q4_0-webgpu.gguf';
+const DEFAULT_PREPACKED_MODEL_URL = '/prepacked-release/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack';
 
 function write(line: string): void {
   output.textContent += `\n${line}`;
@@ -68,15 +70,23 @@ runButton.addEventListener('click', async () => {
     write(`Storage binding limit: ${(device.limits.maxStorageBufferBindingSize / 2 ** 20).toFixed(0)} MiB`);
     const searchParams = new URLSearchParams(location.search);
     const q40 = !searchParams.has('q4km');
+    const usePrepacked = q40 && !searchParams.has('gguf');
     const modelUrl = q40
       ? (import.meta.env.VITE_Q40_MODEL_URL?.trim() || DEFAULT_WEBGPU_MODEL_URL)
       : '/models/qwen3-embedding-0.6b-q4_k_m.gguf';
-    write(q40 ? 'Fetching 364 MiB Q4_0 WebGPU release model…' : 'Fetching 378 MiB Q4_K_M model…');
-    const response = await fetch(modelUrl);
+    write(q40 ? `Fetching 364 MiB Q4_0 WebGPU model${usePrepacked ? ' + 420 MiB tile32 pack' : ''}…` : 'Fetching 378 MiB Q4_K_M model…');
+    const prepackedUrl = import.meta.env.VITE_PREPACKED_MODEL_URL?.trim() || DEFAULT_PREPACKED_MODEL_URL;
+    const [response, prepackedResponse] = await Promise.all([
+      fetch(modelUrl),
+      usePrepacked ? fetch(prepackedUrl) : Promise.resolve(undefined),
+    ]);
     if (!response.ok) throw new Error(`model fetch failed: ${response.status}`);
+    if (prepackedResponse && !prepackedResponse.ok) throw new Error(`prepacked model fetch failed: ${prepackedResponse.status}`);
     const buffer = await response.arrayBuffer();
     const model = new GGUFReader(buffer).parse({ metadataKeys: QWEN3_METADATA_KEYS });
+    const prepacked = prepackedResponse ? parsePrepackedModel(await prepackedResponse.arrayBuffer()) : undefined;
     write(`Parsed ${model.metadata.get('general.name')}: ${model.tensors.size} tensors`);
+    if (prepacked) write(`Parsed ${prepacked.tensors.size} prepacked ${prepacked.header.layout} matrices`);
     const acceptanceOnly = searchParams.has('acceptance') || searchParams.has('hundred') || searchParams.has('profile') || searchParams.has('sweep') || searchParams.has('scheduler');
     const skipMicrobenchmarks = acceptanceOnly || q40;
 
@@ -167,7 +177,7 @@ runButton.addEventListener('click', async () => {
 
     write('Uploading all model tensors to the GPU…');
     device.pushErrorScope('validation');
-    const runtime = new Qwen3WebGPUModel(device, model);
+    const runtime = new Qwen3WebGPUModel(device, model, prepacked);
     const uploadError = await device.popErrorScope();
     if (uploadError) throw new Error(`model upload validation: ${uploadError.message}`);
     write('Loading tokenizer…');
@@ -313,7 +323,8 @@ runButton.addEventListener('click', async () => {
       write('PASS');
       return;
     }
-    await singlePlan.run(singleBatch.ids, singleBatch.lengths);
+    const warmEmbeddings = await singlePlan.run(singleBatch.ids, singleBatch.lengths);
+    if(searchParams.has('vector')) write(`VECTOR_JSON ${JSON.stringify(Array.from(warmEmbeddings[0]))}`);
     const benchmarkHundred = searchParams.has('hundred');
     const singleRepeats = benchmarkHundred ? 10 : 3;
     let singleElapsed = 0;
@@ -323,9 +334,24 @@ runButton.addEventListener('click', async () => {
     const singleRps = 1000 / (singleElapsed / singleRepeats);
     write(`WebGPU single stream: ${singleRps.toFixed(2)} req/s (${(singleElapsed / singleRepeats).toFixed(1)} ms)`);
 
+    if (benchmarkHundred && searchParams.has('batchsweep')) {
+      for (const batchSize of [2, 4, 8]) {
+        const plan = runtime.createPlan(batchSize, acceptanceSequence);
+        const batch = makeBatch(batchSize);
+        await plan.run(batch.ids, batch.lengths);
+        const repeats = 3;
+        const started = performance.now();
+        for (let index = 0; index < repeats; index += 1) await plan.run(batch.ids, batch.lengths);
+        const milliseconds = (performance.now() - started) / repeats;
+        write(`WebGPU ${batchSize}-request batch: ${(batchSize * 1000 / milliseconds).toFixed(2)} aggregate req/s (${milliseconds.toFixed(1)} ms/batch)`);
+      }
+    }
+
     const concurrentPlan = runtime.createPlan(16, acceptanceSequence);
     const concurrentBatch = makeBatch(16);
-    await concurrentPlan.run(concurrentBatch.ids, concurrentBatch.lengths);
+    const concurrentWarm = await concurrentPlan.run(concurrentBatch.ids, concurrentBatch.lengths);
+    const worstBatchCosine = Math.min(...concurrentWarm.map((embedding) => warmEmbeddings[0].reduce((sum, value, index) => sum + value * embedding[index], 0)));
+    if(worstBatchCosine<0.999) throw new Error(`batch embedding cosine ${worstBatchCosine} is below 0.999`);
     const concurrentRepeats = benchmarkHundred ? 5 : 2;
     let concurrentElapsed = 0;
     for (let index = 0; index < concurrentRepeats; index += 1) {
@@ -333,10 +359,10 @@ runButton.addEventListener('click', async () => {
     }
     const aggregateRps = 16_000 / (concurrentElapsed / concurrentRepeats);
     const scaling = aggregateRps / singleRps;
-    write(`WebGPU 16-request batch: ${aggregateRps.toFixed(2)} aggregate req/s (${(concurrentElapsed / concurrentRepeats).toFixed(1)} ms/batch), scaling ${scaling.toFixed(2)}×`);
+    write(`WebGPU 16-request batch: ${aggregateRps.toFixed(2)} aggregate req/s (${(concurrentElapsed / concurrentRepeats).toFixed(1)} ms/batch), scaling ${scaling.toFixed(2)}×, cosine ${worstBatchCosine.toFixed(6)}`);
 
     if (benchmarkHundred) {
-      write(`BENCHMARK_JSON ${JSON.stringify({ exactTokens: acceptanceTokens.length, singleRps, aggregateRps, scaling })}`);
+      write(`BENCHMARK_JSON ${JSON.stringify({ exactTokens: acceptanceTokens.length, singleRps, aggregateRps, scaling, worstBatchCosine })}`);
       write('Benchmark complete');
       return;
     }

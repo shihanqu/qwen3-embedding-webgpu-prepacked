@@ -20,15 +20,16 @@ export function encodeRun(pass: GPUComputePassEncoder, run: EncodableRun): void 
 
 const rmsNormShader = /* wgsl */`
 enable f16;
+enable subgroups;
 struct Params { rows: u32, width: u32, residual: u32, _pad: u32, epsilon: f32 }
 @group(0) @binding(0) var<storage, read_write> x: array<f16>;
 @group(0) @binding(1) var<storage, read> residual: array<f16>;
 @group(0) @binding(2) var<storage, read> weight: array<f32>;
 @group(0) @binding(3) var<storage, read_write> normalized: array<f16>;
 @group(0) @binding(4) var<uniform> params: Params;
-var<workgroup> sums: array<f32, 256>;
+var<workgroup> sums: array<f32, 128>;
 @compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) local: vec3<u32>) {
+fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) local: vec3<u32>, @builtin(subgroup_invocation_id) subgroup_lane: u32, @builtin(subgroup_id) subgroup_id: u32, @builtin(num_subgroups) num_subgroups: u32) {
   let row = group.x;
   let lane = local.x;
   var sum = 0.0;
@@ -38,12 +39,15 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) l
     if (params.residual != 0u) { value += f32(residual[index]); x[index] = f16(value); }
     sum += value * value;
   }
-  sums[lane] = sum;
+  let partial=subgroupAdd(sum);
+  if(subgroup_lane==0u){sums[subgroup_id]=partial;}
   workgroupBarrier();
-  for (var stride = 128u; stride > 0u; stride >>= 1u) {
-    if (lane < stride) { sums[lane] += sums[lane + stride]; }
-    workgroupBarrier();
+  if(subgroup_id==0u){
+    let value=select(0.0,sums[subgroup_lane],subgroup_lane<num_subgroups);
+    let total=subgroupAdd(value);
+    if(subgroup_lane==0u){sums[0]=total;}
   }
+  workgroupBarrier();
   let inv_rms = inverseSqrt(sums[0] / f32(params.width) + params.epsilon);
   for (var column = lane; column < params.width; column += 256u) {
     let index = row * params.width + column;
@@ -99,6 +103,7 @@ export class SwiGLUKernel {
 
 const qkNormRopeShader = /* wgsl */`
 enable f16;
+enable subgroups;
 struct Params { tokens: u32, sequence: u32, input_stride: u32, q_heads: u32, kv_heads: u32, _pad: u32, epsilon: f32, theta: f32 }
 @group(0) @binding(0) var<storage, read> input: array<f16>;
 @group(0) @binding(1) var<storage, read> q_weight: array<f32>;
@@ -109,7 +114,7 @@ struct Params { tokens: u32, sequence: u32, input_stride: u32, q_heads: u32, kv_
 var<workgroup> values: array<f32, 128>;
 var<workgroup> sums: array<f32, 128>;
 @compute @workgroup_size(128)
-fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) local: vec3<u32>) {
+fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) local: vec3<u32>, @builtin(subgroup_invocation_id) subgroup_lane: u32, @builtin(subgroup_id) subgroup_id: u32, @builtin(num_subgroups) num_subgroups: u32) {
   let total_heads=params.q_heads+params.kv_heads; let token=group.x/total_heads; let combined_head=group.x%total_heads;
   let is_q=combined_head<params.q_heads; let head=select(combined_head-params.q_heads,combined_head,is_q);
   let heads=select(params.kv_heads,params.q_heads,is_q);
@@ -118,9 +123,15 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) l
   let input_base = token * params.input_stride + input_offset + head * 128u;
   let output_base = (token * heads + head) * 128u;
   values[d] = f32(input[input_base + d]);
-  sums[d] = values[d] * values[d];
+  let partial=subgroupAdd(values[d]*values[d]);
+  if(subgroup_lane==0u){sums[subgroup_id]=partial;}
   workgroupBarrier();
-  for (var stride = 64u; stride > 0u; stride >>= 1u) { if (d < stride) { sums[d] += sums[d + stride]; } workgroupBarrier(); }
+  if(subgroup_id==0u){
+    let value=select(0.0,sums[subgroup_lane],subgroup_lane<num_subgroups);
+    let total=subgroupAdd(value);
+    if(subgroup_lane==0u){sums[0]=total;}
+  }
+  workgroupBarrier();
   let norm_weight=select(k_weight[d],q_weight[d],is_q);
   let normed = values[d] * inverseSqrt(sums[0] / 128.0 + params.epsilon) * norm_weight;
   values[d] = normed;
@@ -139,8 +150,8 @@ export class QKNormRopeKernel {
   constructor(readonly device: GPUDevice) {
     this.pipeline = device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: qkNormRopeShader }), entryPoint: 'main' }, label: 'QK norm + RoPE' });
   }
-  createRun(input: GPUBuffer, qWeight: GPUBuffer, kWeight: GPUBuffer, qOutput: GPUBuffer, kOutput: GPUBuffer, tokens: number, sequence: number, epsilon: number, theta: number): EncodableRun {
-    const params = paramsBuffer(this.device, 32, (v) => { v.setUint32(0,tokens,true);v.setUint32(4,sequence,true);v.setUint32(8,3072,true);v.setUint32(12,16,true);v.setUint32(16,8,true);v.setFloat32(24,epsilon,true);v.setFloat32(28,theta,true); });
+  createRun(input: GPUBuffer, qWeight: GPUBuffer, kWeight: GPUBuffer, qOutput: GPUBuffer, kOutput: GPUBuffer, tokens: number, sequence: number, epsilon: number, theta: number, inputStride = 3072): EncodableRun {
+    const params = paramsBuffer(this.device, 32, (v) => { v.setUint32(0,tokens,true);v.setUint32(4,sequence,true);v.setUint32(8,inputStride,true);v.setUint32(12,16,true);v.setUint32(16,8,true);v.setFloat32(24,epsilon,true);v.setFloat32(28,theta,true); });
     return { pipeline: this.pipeline, bindGroup: this.device.createBindGroup({ layout: this.pipeline.getBindGroupLayout(0), entries: [
       {binding:0,resource:{buffer:input}},{binding:1,resource:{buffer:qWeight}},{binding:2,resource:{buffer:kWeight}},
       {binding:3,resource:{buffer:qOutput}},{binding:4,resource:{buffer:kOutput}},{binding:5,resource:{buffer:params}},
@@ -159,6 +170,7 @@ var<workgroup> q_tile: array<vec4<f16>, 512>;
 var<workgroup> k_tile: array<vec4<f16>, 512>;
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) local: vec3<u32>, @builtin(local_invocation_index) lane: u32) {
+  if (group.x > group.y) { return; }
   let batch = group.z / params.q_heads; let q_head = group.z % params.q_heads;
   let kv_head = q_head / (params.q_heads / params.kv_heads);
   var index = lane;
@@ -187,10 +199,10 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) l
     sums += vec4<f32>(f32(dot(a0,b0)), f32(dot(a0,b1)), f32(dot(a1,b0)), f32(dot(a1,b1)));
   }
   let score_base = (batch * params.q_heads + q_head) * params.sequence * params.sequence;
-  if (q0 < params.sequence && k0 < params.sequence) { scores[score_base + q0 * params.sequence + k0] = select(f16(sums.x * 0.08838834764831845), f16(-65504.0), k0 > q0); }
-  if (q0 < params.sequence && k1 < params.sequence) { scores[score_base + q0 * params.sequence + k1] = select(f16(sums.y * 0.08838834764831845), f16(-65504.0), k1 > q0); }
-  if (q1 < params.sequence && k0 < params.sequence) { scores[score_base + q1 * params.sequence + k0] = select(f16(sums.z * 0.08838834764831845), f16(-65504.0), k0 > q1); }
-  if (q1 < params.sequence && k1 < params.sequence) { scores[score_base + q1 * params.sequence + k1] = select(f16(sums.w * 0.08838834764831845), f16(-65504.0), k1 > q1); }
+  if (q0 < params.sequence && k0 <= q0) { scores[score_base + q0 * params.sequence + k0] = f16(sums.x * 0.08838834764831845); }
+  if (q0 < params.sequence && k1 <= q0) { scores[score_base + q0 * params.sequence + k1] = f16(sums.y * 0.08838834764831845); }
+  if (q1 < params.sequence && k0 <= q1) { scores[score_base + q1 * params.sequence + k0] = f16(sums.z * 0.08838834764831845); }
+  if (q1 < params.sequence && k1 <= q1) { scores[score_base + q1 * params.sequence + k1] = f16(sums.w * 0.08838834764831845); }
 }
 `;
 
@@ -216,7 +228,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) l
 const attentionValueShader = /* wgsl */`
 enable f16;
 enable subgroups;
-struct Params { batch: u32, sequence: u32, q_heads: u32, kv_heads: u32 }
+struct Params { batch: u32, sequence: u32, q_heads: u32, kv_heads: u32, value_stride: u32, value_offset: u32 }
 @group(0) @binding(0) var<storage, read> scores: array<f16>;
 @group(0) @binding(1) var<storage, read> value: array<vec4<f16>>;
 @group(0) @binding(2) var<storage, read_write> output: array<vec4<f16>>;
@@ -226,36 +238,38 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) l
   let q_pos=group.x; let batch=group.y/params.q_heads; let q_head=group.y%params.q_heads;
   let kv_head=q_head/(params.q_heads/params.kv_heads); let d4=local.x;
   let score_base=((batch*params.q_heads+q_head)*params.sequence+q_pos)*params.sequence;
-  var total=vec4<f32>(0.0);
+  var total=vec4<f32>(0.0); var denominator=0.0; var maximum=-3.402823e38;
   for (var k_pos=0u; k_pos<=q_pos; k_pos+=1u) {
     var own_score=f16(0.0); if (d4==0u) { own_score=scores[score_base+k_pos]; }
-    let probability=f32(subgroupBroadcastFirst(own_score));
-    let v4=value[((batch*params.sequence+k_pos)*params.kv_heads+kv_head)*32u+d4];
-    total+=probability*vec4<f32>(v4);
+    let score=f32(subgroupBroadcastFirst(own_score));
+    let next_max=max(maximum,score);
+    var own_alpha=1.0; var own_beta=0.0;
+    if(d4==0u){own_alpha=exp(maximum-next_max);own_beta=exp(score-next_max);}
+    let alpha=subgroupBroadcastFirst(own_alpha); let beta=subgroupBroadcastFirst(own_beta);
+    let scalar_offset=(batch*params.sequence+k_pos)*params.value_stride+params.value_offset+kv_head*128u;
+    let v4=value[scalar_offset/4u+d4];
+    total=total*alpha+beta*vec4<f32>(v4); denominator=denominator*alpha+beta; maximum=next_max;
   }
-  output[((batch*params.sequence+q_pos)*params.q_heads+q_head)*32u+d4]=vec4<f16>(total);
+  output[((batch*params.sequence+q_pos)*params.q_heads+q_head)*32u+d4]=vec4<f16>(total/denominator);
 }
 `;
 
-export interface AttentionRun { qk: EncodableRun; softmax: EncodableRun; av: EncodableRun }
+export interface AttentionRun { qk: EncodableRun; av: EncodableRun }
 
 export class CausalAttentionKernel {
-  readonly qkPipeline: GPUComputePipeline; readonly softmaxPipeline: GPUComputePipeline; readonly avPipeline: GPUComputePipeline;
+  readonly qkPipeline: GPUComputePipeline; readonly avPipeline: GPUComputePipeline;
   constructor(readonly device: GPUDevice) {
     this.qkPipeline=device.createComputePipeline({layout:'auto',compute:{module:device.createShaderModule({code:qkScoreShader}),entryPoint:'main'},label:'tiled QK scores'});
-    this.softmaxPipeline=device.createComputePipeline({layout:'auto',compute:{module:device.createShaderModule({code:softmaxShader}),entryPoint:'main'},label:'causal attention softmax'});
-    this.avPipeline=device.createComputePipeline({layout:'auto',compute:{module:device.createShaderModule({code:attentionValueShader}),entryPoint:'main'},label:'subgroup attention values'});
+    this.avPipeline=device.createComputePipeline({layout:'auto',compute:{module:device.createShaderModule({code:attentionValueShader}),entryPoint:'main'},label:'online-softmax attention values'});
   }
-  createRun(q:GPUBuffer,k:GPUBuffer,v:GPUBuffer,output:GPUBuffer,batch:number,sequence:number,qHeads=16,kvHeads=8):AttentionRun {
-    const common=createBufferWithData(this.device,new Uint32Array([batch,sequence,qHeads,kvHeads]),GPUBufferUsage.UNIFORM);
+  createRun(q:GPUBuffer,k:GPUBuffer,v:GPUBuffer,output:GPUBuffer,batch:number,sequence:number,qHeads=16,kvHeads=8,valueStride=1024,valueOffset=0):AttentionRun {
+    const common=createBufferWithData(this.device,new Uint32Array([batch,sequence,qHeads,kvHeads,valueStride,valueOffset,0,0]),GPUBufferUsage.UNIFORM);
     const scores=this.device.createBuffer({size:batch*qHeads*sequence*sequence*2,usage:GPUBufferUsage.STORAGE,label:'attention probabilities'});
     const qk:EncodableRun={pipeline:this.qkPipeline,bindGroup:this.device.createBindGroup({layout:this.qkPipeline.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:q}},{binding:1,resource:{buffer:k}},{binding:2,resource:{buffer:scores}},{binding:3,resource:{buffer:common}}]}),dispatch:[Math.ceil(sequence/16),Math.ceil(sequence/16),batch*qHeads]};
-    const softParams=createBufferWithData(this.device,new Uint32Array([batch*qHeads*sequence,sequence,0,0]),GPUBufferUsage.UNIFORM);
-    const softmax:EncodableRun={pipeline:this.softmaxPipeline,bindGroup:this.device.createBindGroup({layout:this.softmaxPipeline.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:scores}},{binding:1,resource:{buffer:softParams}}]}),dispatch:[batch*qHeads*sequence]};
     const av:EncodableRun={pipeline:this.avPipeline,bindGroup:this.device.createBindGroup({layout:this.avPipeline.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:scores}},{binding:1,resource:{buffer:v}},{binding:2,resource:{buffer:output}},{binding:3,resource:{buffer:common}}]}),dispatch:[sequence,batch*qHeads]};
-    return {qk,softmax,av};
+    return {qk,av};
   }
-  encode(pass:GPUComputePassEncoder,run:AttentionRun):void { encodeRun(pass,run.qk); encodeRun(pass,run.softmax); encodeRun(pass,run.av); }
+  encode(pass:GPUComputePassEncoder,run:AttentionRun):void { encodeRun(pass,run.qk); encodeRun(pass,run.av); }
 }
 
 const poolShader = /* wgsl */`

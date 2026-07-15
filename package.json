@@ -14,6 +14,7 @@
     "model:download:q4km": "bash scripts/download-model.sh",
     "model:download:webgpu": "bash scripts/download-webgpu-model.sh",
     "model:prepare:q40": "bash scripts/prepare-q40.sh",
+    "model:prepack": "tsx scripts/prepack-model.ts",
     "bench:baseline": "tsx scripts/bench-endpoint.ts",
     "bench:chart": "tsx scripts/render-benchmark-chart.ts",
     "check": "npm test && npm run build",

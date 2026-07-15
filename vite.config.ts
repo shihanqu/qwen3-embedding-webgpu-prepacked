@@ -10,6 +10,11 @@ const releaseModelProxy = () => ({
   ),
 });
 
+const prepackedModelProxy=()=>({
+  target:'https://github.com',changeOrigin:true,followRedirects:true,
+  rewrite:(path:string)=>path.replace(/^\/prepacked-release/,'/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/prepacked-v1'),
+});
+
 const isolationHeaders = {
   'Cross-Origin-Embedder-Policy': 'require-corp',
   'Cross-Origin-Opener-Policy': 'same-origin',
@@ -20,6 +25,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/model-release': releaseModelProxy(),
+      '/prepacked-release':prepackedModelProxy(),
       '/baseline': {
         target: process.env.LM_STUDIO_URL ?? 'http://127.0.0.1:1234',
         changeOrigin: true,
@@ -41,6 +47,7 @@ export default defineConfig({
   preview: {
     proxy: {
       '/model-release': releaseModelProxy(),
+      '/prepacked-release':prepackedModelProxy(),
     },
     headers: isolationHeaders,
   },

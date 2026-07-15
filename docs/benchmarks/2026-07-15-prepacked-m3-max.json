@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-07-15",
+  "workload": {
+    "name": "hundred",
+    "exactTokenizerTokensIncludingEos": 100,
+    "inputIndex": 0
+  },
+  "system": {
+    "computer": "MacBook Pro Mac15,10",
+    "soc": "Apple M3 Max",
+    "gpu": "30-core Apple GPU",
+    "memory": "96 GB unified",
+    "os": "macOS 26.5.2 build 25F84",
+    "api": "Chromium WebGPU"
+  },
+  "lmStudio": {
+    "model": "text-embedding-qwen3-embedding-0.6b",
+    "endpoint": "http://127.0.0.1:1234/v1/embeddings",
+    "singleRps": 20.55,
+    "concurrency16AggregateRps": 21.40
+  },
+  "existingWebgpuMedian": {
+    "singleRps": 27.5337977363,
+    "concurrency16AggregateRps": 42.5516071212
+  },
+  "prepackedTrials": [
+    { "singleRps": 33.3655867337, "concurrency16AggregateRps": 55.8706036818, "worstBatchCosine": 0.9999999956 },
+    { "singleRps": 33.4464939705, "concurrency16AggregateRps": 56.1242028611, "worstBatchCosine": 0.9999999956 },
+    { "singleRps": 33.3583520976, "concurrency16AggregateRps": 56.7496630488, "worstBatchCosine": 0.9999999956 }
+  ],
+  "prepackedMedian": {
+    "singleRps": 33.3655867337,
+    "concurrency16AggregateRps": 56.1242028611,
+    "cosineVersusSameGguf": 0.9999356824
+  }
+}

@@ -4,9 +4,11 @@ import { createBufferWithData } from './device.ts';
 const TILE_M = 16;
 const TILE_N = 16;
 const TILE_K = 256;
+const SUBGROUP_ROWS = 32;
 
 const shaderPrelude = /* wgsl */`
 enable f16;
+enable subgroups;
 
 struct Params {
   m: u32,
@@ -94,6 +96,17 @@ fn dequant4(row:u32,column:u32)->vec4<f16>{
 }
 `;
 
+const q40PrepackedDequant = /* wgsl */`
+fn dequant4(row:u32,column:u32)->vec4<f16>{
+  let tile=row/32u;let local_row=row&31u;let k_block=column/32u;
+  let block=((tile*params.blocks_per_row+k_block)*32u+local_row)*8u;
+  let word=weights[block+(column&31u)/4u];
+  let scale=f16(unpack2x16float(word).y);
+  let quants=(vec4<u32>(word)>>vec4<u32>(0u,4u,8u,12u))&vec4<u32>(15u);
+  return vec4<f16>(scale)*(vec4<f16>(quants)-vec4<f16>(8.0));
+}
+`;
+
 const q6Dequant = /* wgsl */`
 fn dequant(row: u32, column: u32) -> f16 {
   let block_index = row * params.blocks_per_row + column / 256u;
@@ -140,11 +153,24 @@ fn dequant4(row: u32, column: u32) -> vec4<f16> {
 }
 `;
 
-function createShaderMain(tileK: 64 | 128, halfAccumulation = false): string {
+function createShaderMain(tileK: number, halfAccumulation = false, fullOutputTiles = false): string {
   const vectorK = tileK / 4;
   const tileElements = 16 * vectorK;
   const accumulatorType = halfAccumulation ? 'f16' : 'f32';
   const dotExpression = (left: string, right: string) => halfAccumulation ? `dot(${left}, ${right})` : `f32(dot(${left}, ${right}))`;
+  const weightLoad = fullOutputTiles ? 'dequant4(weight_row, base_k + tile_k)' : 'select(vec4<f16>(0.0), dequant4(weight_row, base_k + tile_k), weight_row < params.n)';
+  const computeCondition = fullOutputTiles ? 'global_m0 < params.m' : 'global_m0 < params.m && global_n0 < params.n';
+  const outputStores = fullOutputTiles
+    ? `if (global_m0 < params.m) { output[global_m0 * params.n + global_n0] = f16(sums.x); output[global_m0 * params.n + global_n1] = f16(sums.y); }
+  if (global_m1 < params.m) { output[global_m1 * params.n + global_n0] = f16(sums.z); output[global_m1 * params.n + global_n1] = f16(sums.w); }`
+    : `if (global_m0 < params.m && global_n0 < params.n) { output[global_m0 * params.n + global_n0] = f16(sums.x); }
+  if (global_m0 < params.m && global_n1 < params.n) { output[global_m0 * params.n + global_n1] = f16(sums.y); }
+  if (global_m1 < params.m && global_n0 < params.n) { output[global_m1 * params.n + global_n0] = f16(sums.z); }
+  if (global_m1 < params.m && global_n1 < params.n) { output[global_m1 * params.n + global_n1] = f16(sums.w); }`;
+  const accumulation = `sums += vec4<${accumulatorType}>(
+          ${dotExpression('av0', 'wv0')}, ${dotExpression('av0', 'wv1')},
+          ${dotExpression('av1', 'wv0')}, ${dotExpression('av1', 'wv1')}
+        );`;
   return /* wgsl */`
 var<workgroup> tile_a: array<vec4<f16>, ${tileElements}>;
 var<workgroup> tile_w: array<vec4<f16>, ${tileElements}>;
@@ -171,11 +197,11 @@ fn main(
       let input_row = workgroup_id.y * 16u + tile_row;
       let weight_row = workgroup_id.x * 16u + tile_row;
       tile_a[index] = select(vec4<f16>(0.0), input[(input_row * params.k + base_k + tile_k) / 4u], input_row < params.m);
-      tile_w[index] = select(vec4<f16>(0.0), dequant4(weight_row, base_k + tile_k), weight_row < params.n);
+      tile_w[index] = ${weightLoad};
       index += 64u;
     }
     workgroupBarrier();
-    if (global_m0 < params.m && global_n0 < params.n) {
+    if (${computeCondition}) {
       let a0 = local_id.y * ${vectorK}u;
       let a1 = (local_id.y + 8u) * ${vectorK}u;
       let w0 = local_id.x * ${vectorK}u;
@@ -185,19 +211,13 @@ fn main(
         let av1 = tile_a[a1 + k];
         let wv0 = tile_w[w0 + k];
         let wv1 = tile_w[w1 + k];
-        sums += vec4<${accumulatorType}>(
-          ${dotExpression('av0', 'wv0')}, ${dotExpression('av0', 'wv1')},
-          ${dotExpression('av1', 'wv0')}, ${dotExpression('av1', 'wv1')}
-        );
+        ${accumulation}
       }
     }
     workgroupBarrier();
     base_k += ${tileK}u;
   }
-  if (global_m0 < params.m && global_n0 < params.n) { output[global_m0 * params.n + global_n0] = f16(sums.x); }
-  if (global_m0 < params.m && global_n1 < params.n) { output[global_m0 * params.n + global_n1] = f16(sums.y); }
-  if (global_m1 < params.m && global_n0 < params.n) { output[global_m1 * params.n + global_n0] = f16(sums.z); }
-  if (global_m1 < params.m && global_n1 < params.n) { output[global_m1 * params.n + global_n1] = f16(sums.w); }
+  ${outputStores}
 }
 `;
 }
@@ -289,6 +309,30 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) l
 `;
 }
 
+function createSubgroupShaderMain(): string {
+  const sumDeclarations = Array.from({ length: SUBGROUP_ROWS }, (_, row) => `var sum${row}=f16(0.0);`).join('\n  ');
+  const accumulations = Array.from({ length: SUBGROUP_ROWS }, (_, row) => `sum${row}+=dot(subgroupBroadcast(own_activation,${row}u),weight);`).join('\n    ');
+  const stores = Array.from({ length: SUBGROUP_ROWS }, (_, row) => `if(m_base+${row}u<params.m){output[(m_base+${row}u)*params.n+n]=sum${row};}`).join('\n    ');
+  return /* wgsl */`
+@compute @workgroup_size(32)
+fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(subgroup_invocation_id) lane: u32) {
+  let n=group.x*32u+lane;
+  let m_base=group.y*${SUBGROUP_ROWS}u;
+  ${sumDeclarations}
+  for(var column=0u;column<params.k;column+=4u){
+    var weight=vec4<f16>(0.0);
+    if(n<params.n){weight=dequant4(n,column);}
+    var own_activation=vec4<f16>(0.0);
+    if(lane<${SUBGROUP_ROWS}u&&m_base+lane<params.m){own_activation=input[((m_base+lane)*params.k+column)/4u];}
+    ${accumulations}
+  }
+  if(n<params.n){
+    ${stores}
+  }
+}
+`;
+}
+
 export interface QuantMatmulRun {
   input: GPUBuffer;
   weights: GPUBuffer;
@@ -300,38 +344,49 @@ export interface QuantMatmulRun {
   k: number;
 }
 
+export type QuantWeightLayout = 'gguf' | 'q4_0-tile32';
+
 export class QuantMatmulKernel {
   readonly latencyPipeline: GPUComputePipeline;
   readonly throughputPipeline: GPUComputePipeline;
   readonly midBatchPipeline: GPUComputePipeline;
   readonly batchPipeline: GPUComputePipeline;
+  readonly subgroupPipeline: GPUComputePipeline;
 
-  constructor(readonly device: GPUDevice, readonly type: GGMLType.Q4_0 | GGMLType.Q4_K | GGMLType.Q6_K) {
+  constructor(readonly device: GPUDevice, readonly type: GGMLType.Q4_0 | GGMLType.Q4_K | GGMLType.Q6_K, readonly layout: QuantWeightLayout = 'gguf') {
+    if (layout === 'q4_0-tile32' && type !== GGMLType.Q4_0) throw new Error('prepacked tile32 layout only supports Q4_0 sources');
     this.latencyPipeline = this.createPipeline(128, 'latency');
-    this.throughputPipeline = this.createPipeline(64, 'throughput');
+    this.throughputPipeline = this.createPipeline(64, 'throughput', layout === 'q4_0-tile32', layout === 'q4_0-tile32');
     this.midBatchPipeline = this.createMidBatchPipeline();
     this.batchPipeline = this.createBatchPipeline();
+    this.subgroupPipeline = this.createSubgroupPipeline();
+  }
+
+  private createSubgroupPipeline(): GPUComputePipeline {
+    const code=this.shaderPrelude()+this.dequantShader()+createSubgroupShaderMain();
+    const module=this.device.createShaderModule({code,label:'prepacked subgroup matmul shader'});
+    return this.device.createComputePipeline({layout:'auto',compute:{module,entryPoint:'main'},label:'prepacked subgroup matmul'});
   }
 
   private createMidBatchPipeline(): GPUComputePipeline {
-    const dequant=this.type===GGMLType.Q4_0?q40Dequant:this.type===GGMLType.Q4_K?q4Dequant:q6Dequant;
-    const code=shaderPrelude+dequant+createMidBatchShaderMain();
+    const dequant=this.dequantShader();
+    const code=this.shaderPrelude()+dequant+createMidBatchShaderMain();
     const quantName=this.type===GGMLType.Q4_0?'Q4_0':this.type===GGMLType.Q4_K?'Q4_K':'Q6_K';
     const module=this.device.createShaderModule({code,label:`${quantName} mid-batch shader`});
     return this.device.createComputePipeline({layout:'auto',compute:{module,entryPoint:'main'},label:`${quantName} fused matmul (mid-batch)`});
   }
 
   private createBatchPipeline(): GPUComputePipeline {
-    const dequant=this.type===GGMLType.Q4_0?q40Dequant:this.type===GGMLType.Q4_K?q4Dequant:q6Dequant;
-    const code=shaderPrelude+dequant+createBatchShaderMain();
+    const dequant=this.dequantShader();
+    const code=this.shaderPrelude()+dequant+createBatchShaderMain();
     const quantName=this.type===GGMLType.Q4_0?'Q4_0':this.type===GGMLType.Q4_K?'Q4_K':'Q6_K';
     const module=this.device.createShaderModule({code,label:`${quantName} batch shader`});
     return this.device.createComputePipeline({layout:'auto',compute:{module,entryPoint:'main'},label:`${quantName} fused matmul (batch)`});
   }
 
-  private createPipeline(tileK: 64 | 128, variant: string, halfAccumulation = false): GPUComputePipeline {
-    const dequant=this.type===GGMLType.Q4_0?q40Dequant:this.type===GGMLType.Q4_K?q4Dequant:q6Dequant;
-    const code = shaderPrelude + dequant + createShaderMain(tileK, halfAccumulation);
+  private createPipeline(tileK: number, variant: string, halfAccumulation = false, fullOutputTiles = false): GPUComputePipeline {
+    const dequant=this.dequantShader();
+    const code = this.shaderPrelude() + dequant + createShaderMain(tileK, halfAccumulation, fullOutputTiles);
     const quantName = this.type===GGMLType.Q4_0?'Q4_0':this.type === GGMLType.Q4_K ? 'Q4_K' : 'Q6_K';
     const module = this.device.createShaderModule({ code, label: `${quantName} ${variant} shader` });
     return this.device.createComputePipeline({
@@ -339,6 +394,15 @@ export class QuantMatmulKernel {
       compute: { module, entryPoint: 'main' },
       label: `${quantName} fused matmul (${variant})`,
     });
+  }
+
+  private dequantShader(): string {
+    if (this.layout === 'q4_0-tile32') return q40PrepackedDequant;
+    return this.type===GGMLType.Q4_0?q40Dequant:this.type===GGMLType.Q4_K?q4Dequant:q6Dequant;
+  }
+
+  private shaderPrelude(): string {
+    return shaderPrelude;
   }
 
   createRun(input: Uint16Array, weights: Uint8Array, m: number, n: number, k: number): QuantMatmulRun {
@@ -362,7 +426,7 @@ export class QuantMatmulKernel {
       GPUBufferUsage.UNIFORM,
       'matmul params',
     );
-    const pipeline = m >= 512 ? this.batchPipeline : m >= 256 ? this.midBatchPipeline : m >= 64 ? this.throughputPipeline : this.latencyPipeline;
+    const pipeline = this.layout === 'q4_0-tile32' && m >= 512 ? this.subgroupPipeline : m >= 512 ? this.batchPipeline : m >= 256 ? this.midBatchPipeline : m >= 64 ? this.throughputPipeline : this.latencyPipeline;
     const bindGroup = this.device.createBindGroup({
       layout: pipeline.getBindGroupLayout(0),
       entries: [
@@ -380,6 +444,10 @@ export class QuantMatmulKernel {
     pass.setBindGroup(0, run.bindGroup);
     const batch = run.pipeline === this.batchPipeline;
     const midBatch = run.pipeline === this.midBatchPipeline;
+    if (run.pipeline === this.subgroupPipeline) {
+      pass.dispatchWorkgroups(Math.ceil(run.n / 32), Math.ceil(run.m / SUBGROUP_ROWS));
+      return;
+    }
     pass.dispatchWorkgroups(Math.ceil(run.n / (batch || midBatch ? 32 : TILE_N)), Math.ceil(run.m / (batch ? 32 : TILE_M)));
   }
 
