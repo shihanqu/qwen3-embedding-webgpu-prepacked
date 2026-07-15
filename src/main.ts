@@ -77,7 +77,7 @@ runButton.addEventListener('click', async () => {
     const buffer = await response.arrayBuffer();
     const model = new GGUFReader(buffer).parse({ metadataKeys: QWEN3_METADATA_KEYS });
     write(`Parsed ${model.metadata.get('general.name')}: ${model.tensors.size} tensors`);
-    const acceptanceOnly = searchParams.has('acceptance') || searchParams.has('profile') || searchParams.has('sweep') || searchParams.has('scheduler');
+    const acceptanceOnly = searchParams.has('acceptance') || searchParams.has('hundred') || searchParams.has('profile') || searchParams.has('sweep') || searchParams.has('scheduler');
     const skipMicrobenchmarks = acceptanceOnly || q40;
 
     if (!skipMicrobenchmarks) {
@@ -249,7 +249,7 @@ runButton.addEventListener('click', async () => {
     }
     }
 
-    const acceptanceText = getWorkload('acceptance').inputs[0];
+    const acceptanceText = getWorkload(searchParams.has('hundred') ? 'hundred' : 'acceptance').inputs[0];
     const acceptanceEncoded = tokenizer(acceptanceText) as unknown as { input_ids: { tolist(): number[][] } };
     const acceptanceTokens = acceptanceEncoded.input_ids.tolist()[0].map(Number);
     if (acceptanceTokens[acceptanceTokens.length - 1] !== 151643) acceptanceTokens.push(151643);
@@ -314,7 +314,8 @@ runButton.addEventListener('click', async () => {
       return;
     }
     await singlePlan.run(singleBatch.ids, singleBatch.lengths);
-    const singleRepeats = 3;
+    const benchmarkHundred = searchParams.has('hundred');
+    const singleRepeats = benchmarkHundred ? 10 : 3;
     let singleElapsed = 0;
     for (let index = 0; index < singleRepeats; index += 1) {
       const started = performance.now(); await singlePlan.run(singleBatch.ids, singleBatch.lengths); singleElapsed += performance.now() - started;
@@ -325,7 +326,7 @@ runButton.addEventListener('click', async () => {
     const concurrentPlan = runtime.createPlan(16, acceptanceSequence);
     const concurrentBatch = makeBatch(16);
     await concurrentPlan.run(concurrentBatch.ids, concurrentBatch.lengths);
-    const concurrentRepeats = 2;
+    const concurrentRepeats = benchmarkHundred ? 5 : 2;
     let concurrentElapsed = 0;
     for (let index = 0; index < concurrentRepeats; index += 1) {
       const started = performance.now(); await concurrentPlan.run(concurrentBatch.ids, concurrentBatch.lengths); concurrentElapsed += performance.now() - started;
@@ -333,6 +334,12 @@ runButton.addEventListener('click', async () => {
     const aggregateRps = 16_000 / (concurrentElapsed / concurrentRepeats);
     const scaling = aggregateRps / singleRps;
     write(`WebGPU 16-request batch: ${aggregateRps.toFixed(2)} aggregate req/s (${(concurrentElapsed / concurrentRepeats).toFixed(1)} ms/batch), scaling ${scaling.toFixed(2)}×`);
+
+    if (benchmarkHundred) {
+      write(`BENCHMARK_JSON ${JSON.stringify({ exactTokens: acceptanceTokens.length, singleRps, aggregateRps, scaling })}`);
+      write('Benchmark complete');
+      return;
+    }
 
     for (let index = 0; index < 2; index += 1) await fetch('/baseline/v1/embeddings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'text-embedding-qwen3-embedding-0.6b', input: acceptanceText }) });
     const baselineRepeats = 5;

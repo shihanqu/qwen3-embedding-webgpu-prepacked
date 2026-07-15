@@ -1,4 +1,4 @@
-export type WorkloadName = 'tiny' | 'sentence' | 'short' | 'acceptance' | 'long' | 'mixed';
+export type WorkloadName = 'tiny' | 'sentence' | 'short' | 'hundred' | 'acceptance' | 'long' | 'mixed';
 
 export interface Workload {
   name: WorkloadName;
@@ -12,6 +12,8 @@ const seedSentences = [
   'The database transaction commits only after every invariant has been checked.',
   'WebGPU dispatches compute work to the graphics processor without a native extension.',
 ];
+
+const exactHundredTokenInput = 'A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox';
 
 function repeatToNominalTokens(sentence: string, tokens: number): string {
   // Stable English prose averages close to 1.3 tokenizer tokens per whitespace word
@@ -27,6 +29,9 @@ export function getWorkload(name: WorkloadName): Workload {
   }
   if (name === 'sentence') {
     return { name, nominalTokens: 17, inputs: [seedSentences[0]] };
+  }
+  if (name === 'hundred') {
+    return { name, nominalTokens: 100, inputs: [exactHundredTokenInput] };
   }
   const nominalTokens = name === 'short' ? 32 : name === 'long' ? 512 : 128;
   const lengths = name === 'mixed' ? [32, 64, 128, 512] : seedSentences.map(() => nominalTokens);
