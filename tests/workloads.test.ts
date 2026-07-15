@@ -12,7 +12,7 @@ describe('100-token benchmark workload', () => {
 
 describe('comparison workloads', () => {
   it('provides deterministic fixtures for every graphed token count', () => {
-    expect(COMPARISON_TOKEN_COUNTS).toEqual([15, 50, 150, 500]);
+    expect(COMPARISON_TOKEN_COUNTS).toEqual([15, 50, 150]);
     for (const tokens of COMPARISON_TOKEN_COUNTS) {
       const workload = getComparisonWorkload(tokens);
       expect(workload.nominalTokens).toBe(tokens);

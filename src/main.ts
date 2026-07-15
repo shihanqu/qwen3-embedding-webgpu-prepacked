@@ -285,7 +285,7 @@ runButton.addEventListener('click', async () => {
         const concurrentBatch = makeExactBatch(16);
         const warmBatch = await concurrentPlan.run(concurrentBatch.ids, concurrentBatch.lengths);
         const worstBatchCosine = Math.min(...warmBatch.map((embedding) => reference.reduce((sum, value, index) => sum + value * embedding[index], 0)));
-        const cosineFloor = exactTokens >= 500 ? 0.98 : 0.999;
+        const cosineFloor = 0.999;
         if (worstBatchCosine < cosineFloor) throw new Error(`${exactTokens}-token batch cosine ${worstBatchCosine} is below ${cosineFloor}`);
         const concurrentRepeats = 5;
         const concurrentStarted = performance.now();

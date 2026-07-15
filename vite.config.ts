@@ -6,7 +6,7 @@ const releaseModelProxy = () => ({
   followRedirects: true,
   rewrite: (path: string) => path.replace(
     /^\/model-release/,
-    '/shihanqu/qwen3-embedding-webgpu/releases/download/model-q4_0-v1',
+    '/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/prepacked-v1',
   ),
 });
 

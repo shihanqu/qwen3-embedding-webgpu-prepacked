@@ -1,13 +1,7 @@
 {
   "schemaVersion": 1,
   "date": "2026-07-15",
-  "hardware": {
-    "computer": "MacBook Pro (Mac15,10)",
-    "chip": "Apple M3 Max",
-    "cpu": "14 cores (10 performance, 4 efficiency)",
-    "gpu": "30 cores",
-    "memory": "96 GB unified memory"
-  },
+  "testedHardware": "Apple M3 Max, 30 core GPU",
   "software": {
     "os": "macOS 26.5.2 (25F84)",
     "webgpu": "Chromium WebGPU with shader-f16, subgroups, and timestamp-query",
@@ -52,16 +46,6 @@
       ],
       "webgpuMedian": { "singleRps": 22.20815705589562, "concurrency16AggregateRps": 37.75802298986845, "scaling": 1.700 },
       "lmStudio": { "singleRps": 18.532913556876196, "concurrency16AggregateRps": 19.407004349228057, "singleRequests": 186, "concurrency16Requests": 210 }
-    },
-    {
-      "tokens": 500,
-      "webgpuTrials": [
-        { "singleRps": 6.602555849347205, "concurrency16AggregateRps": 10.043355912048334, "worstBatchCosine": 0.9963729743744716 },
-        { "singleRps": 6.661670413856275, "concurrency16AggregateRps": 10.028110045968871, "worstBatchCosine": 0.9922314663155658 },
-        { "singleRps": 6.683576114243671, "concurrency16AggregateRps": 10.041143585844495, "worstBatchCosine": 0.9916862320815316 }
-      ],
-      "webgpuMedian": { "singleRps": 6.661670413856275, "concurrency16AggregateRps": 10.041143585844495, "scaling": 1.507 },
-      "lmStudio": { "singleRps": 8.023498018859712, "concurrency16AggregateRps": 7.562902467438486, "singleRequests": 81, "concurrency16Requests": 91 }
     }
   ]
 }

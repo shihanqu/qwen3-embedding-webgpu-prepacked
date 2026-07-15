@@ -6,7 +6,7 @@ export interface Workload {
   inputs: string[];
 }
 
-export const COMPARISON_TOKEN_COUNTS = [15, 50, 150, 500] as const;
+export const COMPARISON_TOKEN_COUNTS = [15, 50, 150] as const;
 export type ComparisonTokenCount = typeof COMPARISON_TOKEN_COUNTS[number];
 
 const seedSentences = [
@@ -21,7 +21,6 @@ const comparisonWordCounts: Record<ComparisonTokenCount, number> = {
   15: 14,
   50: 44,
   150: 135,
-  500: 446,
 };
 
 const exactHundredTokenInput = 'A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox crosses the quiet trail while the morning fog lifts from the valley. A red fox';

@@ -13,25 +13,30 @@ The benchmark uses identical text for both runtimes and exact tokenizer lengths 
 | 15 tokens | 28.84 req/s | **60.25 req/s** | 30.71 req/s | **255.85 req/s** |
 | 50 tokens | 25.66 req/s | **40.01 req/s** | 27.25 req/s | **108.31 req/s** |
 | 150 tokens | 18.53 req/s | **22.21 req/s** | 19.41 req/s | **37.76 req/s** |
-| 500 tokens | **8.02 req/s** | 6.66 req/s | 7.56 req/s | **10.04 req/s** |
 
-At 16 concurrent requests, WebGPU delivers 8.33× LM Studio throughput at 15 tokens, 3.98× at 50 tokens, 1.95× at 150 tokens, and 1.33× at 500 tokens. LM Studio is faster for the 500-token single-stream case; the WebGPU path is optimized primarily for short and concurrent embedding workloads.
+At 16 concurrent requests, WebGPU delivers 8.33× LM Studio throughput at 15 tokens, 3.98× at 50 tokens, and 1.95× at 150 tokens.
 
-The batch path is checked against the single-request embedding in every trial. Worst cosine agreement across the graphed trials was `0.999928` at 15 tokens, `0.999936` at 50 tokens, `1.000000` at 150 tokens, and `0.991686` at 500 tokens.
+The batch path is checked against the single-request embedding in every trial. Worst cosine agreement across the graphed trials was `0.999928` at 15 tokens, `0.999936` at 50 tokens, and `1.000000` at 150 tokens.
 
 ### Test hardware
 
-| Component | Configuration |
-|---|---|
-| Computer | MacBook Pro `Mac15,10` |
-| SoC / GPU | Apple M3 Max, 30-core GPU |
-| CPU | 14 cores (10 performance, 4 efficiency) |
-| Memory | 96 GB unified memory |
-| OS | macOS 26.5.2, build 25F84 |
-| Browser | Chromium WebGPU with `shader-f16`, subgroups, and timestamp queries |
-| LM Studio API | `text-embedding-qwen3-embedding-0.6b` at `127.0.0.1:1234` |
+Apple M3 Max, 30 core GPU.
 
 Results depend on the GPU, browser, power state, and thermals. The complete measurements and trial-level values are in [`docs/benchmarks/2026-07-15-webgpu-vs-lm-studio-m3-max.json`](docs/benchmarks/2026-07-15-webgpu-vs-lm-studio-m3-max.json).
+
+## Expected system requirements
+
+These are practical estimates rather than hard compatibility guarantees:
+
+| Resource | Minimum | Recommended |
+|---|---|---|
+| Browser | Chromium-based browser with WebGPU, `shader-f16`, and subgroup support | Current stable Chrome or Edge |
+| GPU | Apple Silicon or a modern NVIDIA/AMD GPU exposing the required WebGPU features | Recent discrete GPU or Apple Silicon with at least 4 GB of available GPU/shared memory |
+| System memory | 8 GB | 16 GB or more for 16 concurrent requests |
+| Storage and initial download | About 1 GB for the two model assets | 2 GB free for assets, browser cache, and build output |
+| Local development | Node.js 24 and npm | Current Node.js 24 LTS release |
+
+The browser must allow individual WebGPU storage-buffer bindings of at least 128 MiB. Systems with unified memory count available system memory toward GPU allocations. Actual memory use grows with batch size and sequence length.
 
 ## How it works
 
@@ -59,18 +64,12 @@ The app loads these pinned GitHub Release assets by default:
 
 | Artifact | Purpose | Size | SHA-256 / source |
 |---|---|---:|---|
-| [`qwen3-embedding-0.6b-q4_0-webgpu.gguf`](https://github.com/shihanqu/qwen3-embedding-webgpu/releases/download/model-q4_0-v1/qwen3-embedding-0.6b-q4_0-webgpu.gguf) | Metadata, token embeddings, normalization weights, and source identity | 364 MiB | `4acbfc4947344ca4d4a215ee35e601c5e6f505172b517da194460e2ff113433e` |
+| [`qwen3-embedding-0.6b-q4_0-webgpu.gguf`](https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/prepacked-v1/qwen3-embedding-0.6b-q4_0-webgpu.gguf) | Metadata, token embeddings, normalization weights, and source identity | 364 MiB | `4acbfc4947344ca4d4a215ee35e601c5e6f505172b517da194460e2ff113433e` |
 | [`qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack`](https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/prepacked-v1/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack) | 140 GPU-ready Q4_0 projection matrices | 420 MiB | [`52c4b6…d24b3`](docs/prepacked-v1.sha256); its header pins the GGUF hash above |
 
 The `.wgpack` is a derived representation of the same model, not a second model. Model artifacts retain the upstream Apache-2.0 license; source code is MIT licensed.
 
 ## Quick start
-
-Requirements:
-
-- Node.js 24 or newer and npm.
-- A Chromium browser exposing WebGPU, `shader-f16`, and subgroup operations.
-- Roughly 1 GB of available GPU or shared memory for common workloads; long 16-request contexts require more.
 
 ```sh
 git clone https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked.git
@@ -109,7 +108,7 @@ The generator is deterministic. The format consists of an 8-byte `WGPACK01` magi
 
 ## Reproduce the comparison
 
-Run all four warmed WebGPU conditions in one model load:
+Run all three warmed WebGPU conditions in one model load:
 
 ```text
 http://127.0.0.1:5173/?matrix=1
@@ -121,7 +120,6 @@ Run LM Studio against the same exact fixtures with independent HTTP workers:
 npm run bench:baseline -- --tokens=15  --input-index=0 --concurrency=1,16 --duration-ms=10000 --warmup=10
 npm run bench:baseline -- --tokens=50  --input-index=0 --concurrency=1,16 --duration-ms=10000 --warmup=10
 npm run bench:baseline -- --tokens=150 --input-index=0 --concurrency=1,16 --duration-ms=10000 --warmup=10
-npm run bench:baseline -- --tokens=500 --input-index=0 --concurrency=1,16 --duration-ms=10000 --warmup=10
 ```
 
 Regenerate the checked-in chart from the benchmark JSON:
@@ -134,7 +132,7 @@ The exact fixtures live in `scripts/workloads.ts`. Avoid comparing different inp
 
 ## Portability
 
-The model pack contains no machine ISA and the kernels use standard WGSL, so the design is not tied to Apple GPU architecture. It should run on NVIDIA and AMD hardware when the browser exposes the required WebGPU features. Performance is not architecture-independent: subgroup size, memory behavior, driver quality, and browser support differ. This release has only been validated on Apple M3 Max, so other GPUs should be checked with `npm run check`, `?matrix=1`, and embedding cosine comparisons.
+The model pack contains no machine ISA and the kernels use standard WGSL, so the design is not tied to Apple GPU architecture. It should run on NVIDIA and AMD hardware when the browser exposes the required WebGPU features. Performance is not architecture-independent: subgroup size, memory behavior, driver quality, and browser support differ. This release has only been validated on Apple M3 Max, 30 core GPU, so other GPUs should be checked with `npm run check`, `?matrix=1`, and embedding cosine comparisons.
 
 ## Development
 

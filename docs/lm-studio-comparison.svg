@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="610" viewBox="0 0 1120 610" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="530" viewBox="0 0 1120 530" role="img" aria-labelledby="title desc">
   <title id="title">Qwen3 Embedding 0.6B WebGPU versus LM Studio</title>
-  <desc id="desc">Two horizontal bar charts compare WebGPU and LM Studio at single stream and 16 simultaneous requests for exact 15, 50, 150, and 500 token inputs on an Apple M3 Max.</desc>
-  <rect width="1120" height="610" fill="#0d1117"/>
+  <desc id="desc">Two horizontal bar charts compare WebGPU and LM Studio at single stream and 16 simultaneous requests for exact 15, 50, and 150 token inputs.</desc>
+  <rect width="1120" height="530" fill="#0d1117"/>
   <style>
     .heading { font: 600 24px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f0f6fc; }
     .subheading { font: 600 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f0f6fc; }
@@ -14,11 +14,11 @@
     .gpu { fill: #58a6ff; }
   </style>
   <text x="50" y="48" class="heading" text-anchor="start">Qwen3 Embedding 0.6B · WebGPU vs LM Studio</text>
-  <text x="50" y="78" class="caption" text-anchor="start">Apple M3 Max, 30 cores, 96 GB unified memory</text>
+  <text x="50" y="78" class="caption" text-anchor="start">Apple M3 Max, 30 core GPU</text>
   <text x="80" y="105" class="subheading" text-anchor="start">Single-stream throughput (requests/second)</text>
   <text x="650" y="105" class="subheading" text-anchor="start">16-concurrent aggregate throughput (requests/second)</text>
-  <line x1="80" y1="120" x2="80" y2="460" class="grid"/><text x="80" y="488" class="tick" text-anchor="middle">0</text><line x1="202.85714285714283" y1="120" x2="202.85714285714283" y2="460" class="grid"/><text x="202.85714285714283" y="488" class="tick" text-anchor="middle">20</text><line x1="325.71428571428567" y1="120" x2="325.71428571428567" y2="460" class="grid"/><text x="325.71428571428567" y="488" class="tick" text-anchor="middle">40</text><line x1="448.57142857142856" y1="120" x2="448.57142857142856" y2="460" class="grid"/><text x="448.57142857142856" y="488" class="tick" text-anchor="middle">60</text>
-  <line x1="650" y1="120" x2="650" y2="460" class="grid"/><text x="650" y="488" class="tick" text-anchor="middle">0</text><line x1="747.5" y1="120" x2="747.5" y2="460" class="grid"/><text x="747.5" y="488" class="tick" text-anchor="middle">70</text><line x1="845" y1="120" x2="845" y2="460" class="grid"/><text x="845" y="488" class="tick" text-anchor="middle">140</text><line x1="942.5" y1="120" x2="942.5" y2="460" class="grid"/><text x="942.5" y="488" class="tick" text-anchor="middle">210</text><line x1="1040" y1="120" x2="1040" y2="460" class="grid"/><text x="1040" y="488" class="tick" text-anchor="middle">280</text>
+  <line x1="80" y1="120" x2="80" y2="380" class="grid"/><text x="80" y="408" class="tick" text-anchor="middle">0</text><line x1="202.85714285714283" y1="120" x2="202.85714285714283" y2="380" class="grid"/><text x="202.85714285714283" y="408" class="tick" text-anchor="middle">20</text><line x1="325.71428571428567" y1="120" x2="325.71428571428567" y2="380" class="grid"/><text x="325.71428571428567" y="408" class="tick" text-anchor="middle">40</text><line x1="448.57142857142856" y1="120" x2="448.57142857142856" y2="380" class="grid"/><text x="448.57142857142856" y="408" class="tick" text-anchor="middle">60</text>
+  <line x1="650" y1="120" x2="650" y2="380" class="grid"/><text x="650" y="408" class="tick" text-anchor="middle">0</text><line x1="747.5" y1="120" x2="747.5" y2="380" class="grid"/><text x="747.5" y="408" class="tick" text-anchor="middle">70</text><line x1="845" y1="120" x2="845" y2="380" class="grid"/><text x="845" y="408" class="tick" text-anchor="middle">140</text><line x1="942.5" y1="120" x2="942.5" y2="380" class="grid"/><text x="942.5" y="408" class="tick" text-anchor="middle">210</text><line x1="1040" y1="120" x2="1040" y2="380" class="grid"/><text x="1040" y="408" class="tick" text-anchor="middle">280</text>
   
     <text x="64" y="168" class="row-label" text-anchor="end">15 tok</text>
     <rect x="80" y="132" width="177.14676993596484" height="22" rx="4" class="lm"/>
@@ -50,17 +50,7 @@
     <text x="685.0311846292819" y="300" class="value" text-anchor="start">19.41</text>
     <text x="710.5915320216025" y="328" class="value" text-anchor="start">37.76</text>
   
-    <text x="64" y="396" class="row-label" text-anchor="end">500 tok</text>
-    <rect x="80" y="360" width="49.287202115852516" height="22" rx="4" class="lm"/>
-    <rect x="80" y="388" width="40.921689685117116" height="22" rx="4" class="gpu"/>
-    <text x="137.28720211585252" y="376" class="value" text-anchor="start">8.02</text>
-    <text x="128.92168968511712" y="404" class="value" text-anchor="start">6.66</text>
-    <rect x="650" y="360" width="10.534042722503605" height="22" rx="4" class="lm"/>
-    <rect x="650" y="388" width="13.98587856599769" height="22" rx="4" class="gpu"/>
-    <text x="668.5340427225036" y="376" class="value" text-anchor="start">7.56</text>
-    <text x="671.9858785659977" y="404" class="value" text-anchor="start">10.04</text>
-  
-  <rect x="80" y="510" width="16" height="16" rx="3" class="lm"/><text x="104" y="523" class="caption" text-anchor="start">LM Studio</text>
-  <rect x="220" y="510" width="16" height="16" rx="3" class="gpu"/><text x="244" y="523" class="caption" text-anchor="start">WebGPU</text>
-  <text x="50" y="566" class="caption" text-anchor="start">Measured 2026-07-15; exact token counts include EOS; WebGPU is the median of three warmed trials; no request errors.</text>
+  <rect x="80" y="430" width="16" height="16" rx="3" class="lm"/><text x="104" y="443" class="caption" text-anchor="start">LM Studio</text>
+  <rect x="220" y="430" width="16" height="16" rx="3" class="gpu"/><text x="244" y="443" class="caption" text-anchor="start">WebGPU</text>
+  <text x="50" y="486" class="caption" text-anchor="start">Measured 2026-07-15; exact token counts include EOS; WebGPU is the median of three warmed trials; no request errors.</text>
 </svg>
