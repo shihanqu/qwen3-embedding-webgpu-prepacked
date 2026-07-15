@@ -11,6 +11,7 @@ import { getWorkload } from '../scripts/workloads.ts';
 
 const runButton = document.querySelector<HTMLButtonElement>('#run')!;
 const output = document.querySelector<HTMLElement>('#output')!;
+const DEFAULT_WEBGPU_MODEL_URL = 'https://github.com/shihanqu/qwen3-embedding-webgpu/releases/download/model-q4_0-v1/qwen3-embedding-0.6b-q4_0-webgpu.gguf';
 
 function write(line: string): void {
   output.textContent += `\n${line}`;
@@ -65,14 +66,17 @@ runButton.addEventListener('click', async () => {
     write(`Adapter: ${adapter.info?.description || adapter.info?.device || 'WebGPU GPU'}`);
     write(`Features: ${Array.from(adapter.features).sort().join(', ')}`);
     write(`Storage binding limit: ${(device.limits.maxStorageBufferBindingSize / 2 ** 20).toFixed(0)} MiB`);
-    const q40 = new URLSearchParams(location.search).has('q40');
-    write(q40 ? 'Fetching 358 MiB Q4_0 model…' : 'Fetching 378 MiB Q4_K_M model…');
-    const response = await fetch(q40?'/models/qwen3-embedding-0.6b-q4_0.gguf':'/models/qwen3-embedding-0.6b-q4_k_m.gguf');
+    const searchParams = new URLSearchParams(location.search);
+    const q40 = !searchParams.has('q4km');
+    const modelUrl = q40
+      ? (import.meta.env.VITE_Q40_MODEL_URL?.trim() || DEFAULT_WEBGPU_MODEL_URL)
+      : '/models/qwen3-embedding-0.6b-q4_k_m.gguf';
+    write(q40 ? 'Fetching 364 MiB Q4_0 WebGPU release model…' : 'Fetching 378 MiB Q4_K_M model…');
+    const response = await fetch(modelUrl);
     if (!response.ok) throw new Error(`model fetch failed: ${response.status}`);
     const buffer = await response.arrayBuffer();
     const model = new GGUFReader(buffer).parse({ metadataKeys: QWEN3_METADATA_KEYS });
     write(`Parsed ${model.metadata.get('general.name')}: ${model.tensors.size} tensors`);
-    const searchParams = new URLSearchParams(location.search);
     const acceptanceOnly = searchParams.has('acceptance') || searchParams.has('profile') || searchParams.has('sweep') || searchParams.has('scheduler');
     const skipMicrobenchmarks = acceptanceOnly || q40;
 

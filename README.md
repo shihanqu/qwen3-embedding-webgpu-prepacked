@@ -8,19 +8,17 @@ The implementation does **not** delegate inference to ONNX Runtime. Quantized pr
 
 ## Required model
 
-The optimized path requires this exact generated file:
+The app uses this exact release asset by default:
 
 | Property | Value |
 |---|---|
-| Runtime path | `models/qwen3-embedding-0.6b-q4_0.gguf` |
+| Release asset | [`qwen3-embedding-0.6b-q4_0-webgpu.gguf`](https://github.com/shihanqu/qwen3-embedding-webgpu/releases/download/model-q4_0-v1/qwen3-embedding-0.6b-q4_0-webgpu.gguf) |
 | Quantization | GGUF Q4_0; token embeddings remain Q6_K, as selected by llama.cpp |
 | Source | [Qwen/Qwen3-Embedding-0.6B-GGUF](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF), file `Qwen3-Embedding-0.6B-f16.gguf` |
 | Generated size | 381,335,744 bytes (364 MiB) |
 | SHA-256 | `4acbfc4947344ca4d4a215ee35e601c5e6f505172b517da194460e2ff113433e` |
 
-Generate Q4_0 directly from Qwen's f16 model. Do not re-quantize an existing Q4 model: double quantization materially reduces embedding agreement. The optional `model:download:q4km` script downloads a higher-quality Q4_K_M model for experiments, but that is not the model used by the published benchmark numbers.
-
-The model weights are not committed to GitHub. Qwen's model is licensed separately under Apache-2.0.
+The 364 MiB weight file is attached to the [`model-q4_0-v1` GitHub Release](https://github.com/shihanqu/qwen3-embedding-webgpu/releases/tag/model-q4_0-v1), rather than stored in normal Git history. Its [artifact notice](MODEL_NOTICE.md), [Apache-2.0 model license](MODEL_LICENSE), and [checksum](docs/model-q4_0-v1.sha256) are checked into the repository and attached to the release.
 
 ## Quick start
 
@@ -28,47 +26,43 @@ The model weights are not committed to GitHub. Qwen's model is licensed separate
 
 - Node.js 24 or newer and npm.
 - Chrome, Edge, or another Chromium browser with WebGPU, `shader-f16`, and subgroup support enabled.
-- [`llama-quantize`](https://github.com/ggml-org/llama.cpp) from a recent llama.cpp build.
-- About 1.7 GB of free disk space while preparing the model; the final Q4_0 file is about 364 MiB.
 
-On macOS, one way to build the required quantizer is:
-
-```sh
-git clone https://github.com/ggml-org/llama.cpp.git
-cmake -S llama.cpp -B llama.cpp/build -DLLAMA_METAL=ON
-cmake --build llama.cpp/build --config Release -j
-```
-
-The executable will normally be at `llama.cpp/build/bin/llama-quantize`.
-
-### 2. Install and prepare the model
+### 2. Install and run
 
 ```sh
 git clone https://github.com/shihanqu/qwen3-embedding-webgpu.git
 cd qwen3-embedding-webgpu
 npm ci
-
-LLAMA_QUANTIZE=/absolute/path/to/llama-quantize \
-  npm run model:prepare:q40
-```
-
-The preparation script downloads the official 1.2 GB f16 GGUF if it is absent, then writes the required Q4_0 file under `models/`. You can provide an existing f16 download with `QWEN3_F16_PATH=/path/to/model.gguf`.
-
-Verify the generated model if you want to reproduce the tested artifact exactly:
-
-```sh
-shasum -a 256 models/qwen3-embedding-0.6b-q4_0.gguf
-```
-
-### 3. Start the browser runtime
-
-```sh
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173/?q40=1&scheduler=1` and select **Load model & benchmark kernel**. The first load reads 364 MiB from disk, uploads the weights, downloads Qwen's tokenizer through Transformers.js, and compiles the WebGPU pipelines. Later executions reuse the compiled plans.
+Open `http://127.0.0.1:5173/?scheduler=1` and select **Load model & benchmark kernel**. The first load downloads the 364 MiB model from the GitHub Release, uploads its weights, downloads Qwen's tokenizer through Transformers.js, and compiles the WebGPU pipelines. Later executions can use the browser cache and reuse compiled plans.
 
 LM Studio is only required for comparison benchmarks. The WebGPU model itself runs entirely in the browser after its model and tokenizer have loaded.
+
+### Local or offline model copy
+
+Download and checksum-verify the release asset into `models/`:
+
+```sh
+npm run model:download:webgpu
+VITE_Q40_MODEL_URL=/models/qwen3-embedding-0.6b-q4_0-webgpu.gguf npm run dev
+```
+
+`VITE_Q40_MODEL_URL` can point to any CORS-accessible mirror or same-origin path. The optional `model:download:q4km` script downloads a higher-quality Q4_K_M model for experiments; launch the app with `?q4km=1` to use it. That alternate model is not used for the published benchmark numbers.
+
+### Reproduce the release artifact
+
+To regenerate the file, build [`llama-quantize`](https://github.com/ggml-org/llama.cpp) from a recent llama.cpp checkout, then quantize directly from Qwen's official f16 model. Do not re-quantize an existing Q4 model: double quantization materially reduces embedding agreement.
+
+```sh
+LLAMA_QUANTIZE=/absolute/path/to/llama-quantize \
+  npm run model:prepare:q40
+
+shasum -a 256 models/qwen3-embedding-0.6b-q4_0-webgpu.gguf
+```
+
+The preparation script downloads the official 1.2 GB f16 GGUF if it is absent, then writes the renamed WebGPU artifact under `models/`. You can instead set `QWEN3_F16_PATH=/path/to/model.gguf`.
 
 ## Request API
 
@@ -82,7 +76,8 @@ import { Qwen3EmbeddingEngine, type TokenizerLike } from './src/webgpu/embedding
 import { Qwen3WebGPUModel } from './src/webgpu/model.ts';
 
 const { device } = await requestWebGPUDevice();
-const bytes = await fetch('/models/qwen3-embedding-0.6b-q4_0.gguf').then((response) => response.arrayBuffer());
+const modelUrl = 'https://github.com/shihanqu/qwen3-embedding-webgpu/releases/download/model-q4_0-v1/qwen3-embedding-0.6b-q4_0-webgpu.gguf';
+const bytes = await fetch(modelUrl).then((response) => response.arrayBuffer());
 const gguf = new GGUFReader(bytes).parse({ metadataKeys: QWEN3_METADATA_KEYS });
 const runtime = new Qwen3WebGPUModel(device, gguf);
 const tokenizer = await AutoTokenizer.from_pretrained('Qwen/Qwen3-Embedding-0.6B');
@@ -111,16 +106,16 @@ LM_STUDIO_URL=http://127.0.0.1:1234 npm run dev
 
 Benchmark modes:
 
-- `?q40=1&scheduler=1` — end-to-end scheduler benchmark through 16 simultaneous `embed()` calls.
-- `?q40=1&sweep=1` — warmed 1/2/4/8/16 sweep at 6, 17, 26, and 105 exact tokenizer tokens.
-- `?q40=1&profile=16` — per-stage GPU timestamps for a 16-request batch.
-- `?q40=1` — full correctness check and the 105-token stress case.
+- `?scheduler=1` — end-to-end scheduler benchmark through 16 simultaneous `embed()` calls.
+- `?sweep=1` — warmed 1/2/4/8/16 sweep at 6, 17, 26, and 105 exact tokenizer tokens.
+- `?profile=16` — per-stage GPU timestamps for a 16-request batch.
+- `/` — full correctness check and the 105-token stress case.
 
 The default correctness page can optionally compare against llama.cpp running the exact same Q4_0 file:
 
 ```sh
 llama-server \
-  -m models/qwen3-embedding-0.6b-q4_0.gguf \
+  -m models/qwen3-embedding-0.6b-q4_0-webgpu.gguf \
   --embedding --pooling last -ngl 99 \
   --host 127.0.0.1 --port 1236
 ```
@@ -178,7 +173,7 @@ npm run bench:baseline -- \
 
 ## Deployment notes
 
-- Host `models/qwen3-embedding-0.6b-q4_0.gguf` at the same path expected by the app, or update the fetch URL.
+- The production build downloads the pinned `model-q4_0-v1` GitHub Release asset by default. Set `VITE_Q40_MODEL_URL` at build time to use a same-origin copy or another CORS-accessible mirror.
 - Preserve the `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` response headers from `vite.config.ts`.
 - The serving browser must expose WebGPU and `shader-f16`; the app fails early with a useful error when these are unavailable.
 - The current app is a development and benchmark console. Integrate `Qwen3EmbeddingEngine` into your own request or UI layer for production use.
@@ -204,4 +199,4 @@ Key files:
 
 ## License
 
-The source code is available under the [MIT License](LICENSE). Qwen model files are not distributed by this repository and retain their upstream Apache-2.0 license.
+The source code is available under the [MIT License](LICENSE). The released Qwen model artifact retains its upstream Apache-2.0 terms; see the [model license](MODEL_LICENSE) and [artifact notice](MODEL_NOTICE.md).

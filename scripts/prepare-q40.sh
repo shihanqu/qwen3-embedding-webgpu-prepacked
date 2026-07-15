@@ -8,7 +8,7 @@ fi
 
 mkdir -p models
 source_model="${QWEN3_F16_PATH:-models/Qwen3-Embedding-0.6B-f16.gguf}"
-output_model="${QWEN3_Q40_PATH:-models/qwen3-embedding-0.6b-q4_0.gguf}"
+output_model="${QWEN3_Q40_PATH:-models/qwen3-embedding-0.6b-q4_0-webgpu.gguf}"
 url="${QWEN3_F16_URL:-https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-f16.gguf}"
 
 if [[ ! -f "$source_model" ]]; then
