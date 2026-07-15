@@ -1,76 +1,67 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="610" viewBox="0 0 1120 610" role="img" aria-labelledby="title desc">
   <title id="title">Qwen3 WebGPU versus LM Studio embedding throughput</title>
-  <desc id="desc">Single-stream requests per second and WebGPU batch-16 scaling at 6, 17, 26, and 105 tokens on an Apple M3 Max. The 6-token acceptance workload is 1.82 times faster than LM Studio and scales 8.04 times.</desc>
+  <desc id="desc">Single-stream requests per second and relative aggregate throughput with 16 simultaneous requests at 6, 17, 26, and 105 tokens on an Apple M3 Max.</desc>
   <style>
     .heading { font: 600 24px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #24292f; }
     .subheading { font: 600 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #24292f; }
-    .label, .row-label, .value, .tick, .caption, .acceptance { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #57606a; }
+    .label, .row-label, .value, .tick, .caption { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #57606a; }
     .row-label { font-size: 14px; font-weight: 600; }
     .value { font-size: 13px; font-weight: 600; }
     .tick, .caption { font-size: 13px; }
-    .acceptance { font-size: 10px; font-weight: 700; fill: #1a7f37; }
     .grid { stroke: #d0d7de; stroke-width: 1; }
-    .grid.target { stroke: #cf222e; stroke-width: 2; stroke-dasharray: 6 5; }
     .lm { fill: #6e7781; }
     .gpu { fill: #2f81f7; }
-    .scale { fill: #a371f7; }
+    .ratio { fill: #a371f7; }
     @media (prefers-color-scheme: dark) {
       .heading, .subheading { fill: #f0f6fc; }
       .label, .row-label, .value, .tick, .caption { fill: #b1bac4; }
-      .acceptance { fill: #3fb950; }
       .grid { stroke: #30363d; }
-      .grid.target { stroke: #f85149; }
       .lm { fill: #8b949e; }
       .gpu { fill: #58a6ff; }
-      .scale { fill: #bc8cff; }
+      .ratio { fill: #bc8cff; }
     }
   </style>
   <text x="50" y="48" class="heading" text-anchor="start">Qwen3 Embedding 0.6B · WebGPU vs LM Studio</text>
-  <text x="50" y="78" class="caption" text-anchor="start">Apple M3 Max, 30 cores, 96 GB unified memory · 2026-07-14</text>
+  <text x="50" y="78" class="caption" text-anchor="start">Apple M3 Max, 30 cores, 96 GB unified memory</text>
   <text x="80" y="105" class="subheading" text-anchor="start">Single-stream throughput (requests/second)</text>
-  <text x="650" y="105" class="subheading" text-anchor="start">WebGPU aggregate scaling at 16 concurrent</text>
+  <text x="650" y="105" class="subheading" text-anchor="start">16-concurrent throughput ratio (WebGPU / LM Studio)</text>
   <line x1="80" y1="120" x2="80" y2="460" class="grid"/><text x="80" y="488" class="tick" text-anchor="middle">0</text><line x1="187.5" y1="120" x2="187.5" y2="460" class="grid"/><text x="187.5" y="488" class="tick" text-anchor="middle">15</text><line x1="295" y1="120" x2="295" y2="460" class="grid"/><text x="295" y="488" class="tick" text-anchor="middle">30</text><line x1="402.5" y1="120" x2="402.5" y2="460" class="grid"/><text x="402.5" y="488" class="tick" text-anchor="middle">45</text><line x1="510" y1="120" x2="510" y2="460" class="grid"/><text x="510" y="488" class="tick" text-anchor="middle">60</text>
-  <line x1="650" y1="120" x2="650" y2="460" class="grid"/><text x="650" y="488" class="tick" text-anchor="middle">0×</text><line x1="736.6666666666666" y1="120" x2="736.6666666666666" y2="460" class="grid"/><text x="736.6666666666666" y="488" class="tick" text-anchor="middle">2×</text><line x1="823.3333333333333" y1="120" x2="823.3333333333333" y2="460" class="grid target"/><text x="823.3333333333333" y="488" class="tick" text-anchor="middle">4×</text><line x1="910" y1="120" x2="910" y2="460" class="grid"/><text x="910" y="488" class="tick" text-anchor="middle">6×</text><line x1="996.6666666666666" y1="120" x2="996.6666666666666" y2="460" class="grid"/><text x="996.6666666666666" y="488" class="tick" text-anchor="middle">8×</text>
+  <line x1="650" y1="120" x2="650" y2="460" class="grid"/><text x="650" y="488" class="tick" text-anchor="middle">0×</text><line x1="771.875" y1="120" x2="771.875" y2="460" class="grid"/><text x="771.875" y="488" class="tick" text-anchor="middle">5×</text><line x1="893.75" y1="120" x2="893.75" y2="460" class="grid"/><text x="893.75" y="488" class="tick" text-anchor="middle">10×</text><line x1="1015.625" y1="120" x2="1015.625" y2="460" class="grid"/><text x="1015.625" y="488" class="tick" text-anchor="middle">15×</text>
   
     <text x="64" y="168" class="row-label" text-anchor="end">6 tok</text>
-    <text x="64" y="143" class="acceptance" text-anchor="end">PASS</text>
-    <rect x="80" y="132" width="225.6783333333333" height="22" rx="4" class="lm"/>
+    <rect x="80" y="132" width="230.91913197547467" height="22" rx="4" class="lm"/>
     <rect x="80" y="160" width="410.865" height="22" rx="4" class="gpu"/>
-    <text x="313.6783333333333" y="148" class="value" text-anchor="start">31.49</text>
+    <text x="318.91913197547467" y="148" class="value" text-anchor="start">32.22</text>
     <text x="498.865" y="176" class="value" text-anchor="start">57.33</text>
-    <rect x="650" y="139" width="348.3999999999999" height="36" rx="5" class="scale"/>
-    <text x="1006.3999999999999" y="163" class="value" text-anchor="start">8.04×</text>
+    <rect x="650" y="139" width="361.1336204133007" height="36" rx="5" class="ratio"/>
+    <text x="1019.1336204133007" y="163" class="value" text-anchor="start">14.82×</text>
   
     <text x="64" y="244" class="row-label" text-anchor="end">17 tok</text>
-    
-    <rect x="80" y="208" width="191.995" height="22" rx="4" class="lm"/>
+    <rect x="80" y="208" width="204.07307629559207" height="22" rx="4" class="lm"/>
     <rect x="80" y="236" width="365.93000000000006" height="22" rx="4" class="gpu"/>
-    <text x="279.995" y="224" class="value" text-anchor="start">26.79</text>
+    <text x="292.07307629559205" y="224" class="value" text-anchor="start">28.48</text>
     <text x="453.93000000000006" y="252" class="value" text-anchor="start">51.06</text>
-    <rect x="650" y="215" width="158.16666666666666" height="36" rx="5" class="scale"/>
-    <text x="816.1666666666666" y="239" class="value" text-anchor="start">3.65×</text>
+    <rect x="650" y="215" width="148.75230509263866" height="36" rx="5" class="ratio"/>
+    <text x="806.7523050926386" y="239" class="value" text-anchor="start">6.10×</text>
   
     <text x="64" y="320" class="row-label" text-anchor="end">26 tok</text>
-    
-    <rect x="80" y="284" width="174.50833333333335" height="22" rx="4" class="lm"/>
+    <rect x="80" y="284" width="208.7439544164365" height="22" rx="4" class="lm"/>
     <rect x="80" y="312" width="354.32" height="22" rx="4" class="gpu"/>
-    <text x="262.5083333333333" y="300" class="value" text-anchor="start">24.35</text>
+    <text x="296.7439544164365" y="300" class="value" text-anchor="start">29.13</text>
     <text x="442.32" y="328" class="value" text-anchor="start">49.44</text>
-    <rect x="650" y="291" width="114.4" height="36" rx="5" class="scale"/>
-    <text x="772.4" y="315" class="value" text-anchor="start">2.64×</text>
+    <rect x="650" y="291" width="101.9618119050181" height="36" rx="5" class="ratio"/>
+    <text x="759.9618119050181" y="315" class="value" text-anchor="start">4.18×</text>
   
     <text x="64" y="396" class="row-label" text-anchor="end">105 tok</text>
-    
-    <rect x="80" y="360" width="136.16666666666666" height="22" rx="4" class="lm"/>
+    <rect x="80" y="360" width="147.25850643476255" height="22" rx="4" class="lm"/>
     <rect x="80" y="388" width="183.825" height="22" rx="4" class="gpu"/>
-    <text x="224.16666666666666" y="376" class="value" text-anchor="start">19.00</text>
+    <text x="235.25850643476255" y="376" class="value" text-anchor="start">20.55</text>
     <text x="271.825" y="404" class="value" text-anchor="start">25.65</text>
-    <rect x="650" y="367" width="65" height="36" rx="5" class="scale"/>
-    <text x="723" y="391" class="value" text-anchor="start">1.50×</text>
+    <rect x="650" y="367" width="43.22306009064027" height="36" rx="5" class="ratio"/>
+    <text x="701.2230600906403" y="391" class="value" text-anchor="start">1.77×</text>
   
   <rect x="80" y="510" width="16" height="16" rx="3" class="lm"/><text x="104" y="523" class="caption" text-anchor="start">LM Studio single</text>
   <rect x="245" y="510" width="16" height="16" rx="3" class="gpu"/><text x="269" y="523" class="caption" text-anchor="start">Custom WebGPU single</text>
-  <rect x="445" y="510" width="16" height="16" rx="3" class="scale"/><text x="469" y="523" class="caption" text-anchor="start">WebGPU batch 16 ÷ single</text>
-  <line x1="720" y1="518" x2="748" y2="518" class="grid target"/><text x="758" y="523" class="caption" text-anchor="start">4× scaling target</text>
-  <text x="50" y="566" class="caption" text-anchor="start">Acceptance: 6 exact tokenizer tokens. Warmed plans; identical text per implementation; LM Studio at 127.0.0.1:1234.</text>
+  <rect x="445" y="510" width="16" height="16" rx="3" class="ratio"/><text x="469" y="523" class="caption" text-anchor="start">WebGPU aggregate ÷ LM Studio aggregate at 16 concurrent</text>
+  <text x="50" y="566" class="caption" text-anchor="start">WebGPU measured 2026-07-14; LM Studio 16-worker HTTP benchmark measured 2026-07-15; no request errors.</text>
 </svg>

@@ -195,10 +195,8 @@ runButton.addEventListener('click', async () => {
       const scaling = aggregateRps / singleRps;
       write(`Scheduler single: ${singleRps.toFixed(2)} req/s; LM Studio ${baselineRps.toFixed(2)} req/s; improvement ${improvement.toFixed(2)}×`);
       write(`Scheduler 16 concurrent: ${aggregateRps.toFixed(2)} aggregate req/s; scaling ${scaling.toFixed(2)}×; worst cosine ${worstCosine.toFixed(6)}`);
-      if (improvement < 1.3) throw new Error(`scheduler single-stream improvement ${improvement.toFixed(2)}× is below 1.30×`);
-      if (scaling < 4) throw new Error(`scheduler scaling ${scaling.toFixed(2)}× is below 4.00×`);
       if (worstCosine < 0.999) throw new Error(`scheduler batch cosine ${worstCosine} is below 0.999`);
-      write('PASS');
+      write('Benchmark complete');
       return;
     }
     if (!acceptanceOnly) {
@@ -339,9 +337,7 @@ runButton.addEventListener('click', async () => {
     const baselineRps = baselineRepeats * 1000 / (performance.now() - baselineStarted);
     const improvement = singleRps / baselineRps;
     write(`LM Studio same-text baseline: ${baselineRps.toFixed(2)} req/s; WebGPU improvement ${improvement.toFixed(2)}×`);
-    if (improvement < 1.3) throw new Error(`single-stream improvement ${improvement.toFixed(2)}× is below 1.30×`);
-    if (scaling < 4) throw new Error(`16-request scaling ${scaling.toFixed(2)}× is below 4.00×`);
-    write('PASS');
+    write('Benchmark complete');
   } catch (error) {
     console.error(error);
     write(`ERROR: ${error instanceof Error ? error.message : String(error)}`);

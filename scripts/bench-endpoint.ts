@@ -13,6 +13,9 @@ const workload = getWorkload(readArgument('workload', 'acceptance') as WorkloadN
 const durationMs = Number(readArgument('duration-ms', '10000'));
 const warmupRequests = Number(readArgument('warmup', '3'));
 const concurrencies = readArgument('concurrency', '1,2,4,8,16').split(',').map(Number);
+const inputIndexArgument = readArgument('input-index', 'all');
+const inputs = inputIndexArgument === 'all' ? workload.inputs : [workload.inputs[Number(inputIndexArgument)]];
+if (inputs.some((input) => input === undefined)) throw new Error(`invalid --input-index=${inputIndexArgument}`);
 
 const target: BenchmarkTarget = {
   name: `baseline:${model}`,
@@ -37,7 +40,7 @@ for (const concurrency of concurrencies) {
     concurrency,
     durationMs,
     warmupRequests,
-    inputs: workload.inputs,
+    inputs,
     tokensPerInput: workload.nominalTokens,
   }));
 }
@@ -51,8 +54,8 @@ await writeFile(outputPath, JSON.stringify({
   endpoint,
   model,
   workload,
+  inputIndex: inputIndexArgument,
   system: { platform: process.platform, arch: process.arch },
   results,
 }, null, 2));
 console.log(`Saved ${outputPath}`);
-

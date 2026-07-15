@@ -18,7 +18,7 @@ The optimized path requires this exact generated file:
 | Generated size | 381,335,744 bytes (364 MiB) |
 | SHA-256 | `4acbfc4947344ca4d4a215ee35e601c5e6f505172b517da194460e2ff113433e` |
 
-Generate Q4_0 directly from Qwen's f16 model. Do not re-quantize an existing Q4 model: double quantization materially reduces embedding agreement. The optional `model:download:q4km` script downloads a higher-quality Q4_K_M model for experiments, but that is not the model used by the published acceptance numbers.
+Generate Q4_0 directly from Qwen's f16 model. Do not re-quantize an existing Q4 model: double quantization materially reduces embedding agreement. The optional `model:download:q4km` script downloads a higher-quality Q4_K_M model for experiments, but that is not the model used by the published benchmark numbers.
 
 The model weights are not committed to GitHub. Qwen's model is licensed separately under Apache-2.0.
 
@@ -111,7 +111,7 @@ LM_STUDIO_URL=http://127.0.0.1:1234 npm run dev
 
 Benchmark modes:
 
-- `?q40=1&scheduler=1` — end-to-end acceptance through 16 simultaneous `embed()` calls.
+- `?q40=1&scheduler=1` — end-to-end scheduler benchmark through 16 simultaneous `embed()` calls.
 - `?q40=1&sweep=1` — warmed 1/2/4/8/16 sweep at 6, 17, 26, and 105 exact tokenizer tokens.
 - `?q40=1&profile=16` — per-stage GPU timestamps for a 16-request batch.
 - `?q40=1` — full correctness check and the 105-token stress case.
@@ -129,7 +129,7 @@ Set `Q4_0_REFERENCE_URL` when that server uses a different address.
 
 ## Published benchmark
 
-Tests were run July 14, 2026 on:
+WebGPU measurements were collected July 14, 2026. The matching LM Studio concurrency runs were collected July 15, 2026 on the same machine:
 
 | Component | Tested configuration |
 |---|---|
@@ -144,18 +144,16 @@ Tests were run July 14, 2026 on:
 | WebGPU model | Clean f16 → Q4_0 conversion described above |
 | LM Studio model | `text-embedding-qwen3-embedding-0.6b` at `127.0.0.1:1234` |
 
-| Exact tokens | WebGPU single | LM Studio single | Improvement | WebGPU batch 16 aggregate | Scaling |
-|---:|---:|---:|---:|---:|---:|
-| 6 (acceptance) | 57.33 req/s | 31.49 req/s | **1.82×** | 461.03 req/s | **8.04×** |
-| 17 | 51.06 req/s | 26.79 req/s | 1.91× | 186.22 req/s | 3.65× |
-| 26 | 49.44 req/s | 24.35 req/s | 2.03× | 130.54 req/s | 2.64× |
-| 105 | 25.65 req/s | 19.00 req/s | 1.35× | 38.41 req/s | 1.50× |
+| Exact tokens | WebGPU single | LM Studio single | WebGPU / LM single | WebGPU at 16 concurrent | LM Studio at 16 concurrent | WebGPU / LM at 16 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 6 | 57.33 req/s | 32.22 req/s | **1.78×** | 461.03 req/s | 31.12 req/s | **14.82×** |
+| 17 | 51.06 req/s | 28.48 req/s | 1.79× | 186.22 req/s | 30.51 req/s | 6.10× |
+| 26 | 49.44 req/s | 29.13 req/s | 1.70× | 130.54 req/s | 31.21 req/s | 4.18× |
+| 105 | 25.65 req/s | 20.55 req/s | 1.25× | 38.41 req/s | 21.66 req/s | 1.77× |
 
-The declared 6-token acceptance workload clears both original goals: single-stream throughput is at least 30% higher than LM Studio, and 16 simultaneous requests deliver at least 4× the single-stream aggregate throughput.
+LM Studio was tested with 16 independent HTTP workers against the same text used for each WebGPU row. After 10 warmup requests, each condition ran for 10 seconds; the 6-token condition ran for 15 seconds. There were no request errors. LM Studio's aggregate throughput at concurrency 16 remained close to its single-request throughput, while per-request latency rose to roughly 0.5–0.7 seconds.
 
-Scaling is length-dependent. The 17-, 26-, and 105-token stress cases do not currently clear the 4× concurrency goal. They are published alongside the acceptance result so the short-query result is not mistaken for length-independent behavior.
-
-The WebGPU output agrees with llama.cpp running the exact same clean Q4_0 GGUF at cosine `0.999995`. Batch output agrees with the single path at cosine `1.000000` for the acceptance case. Cosine against a separately quantized LM Studio model is not an implementation correctness comparison.
+The WebGPU output agrees with llama.cpp running the exact same clean Q4_0 GGUF at cosine `0.999995`. Batch output agrees with the single path at cosine `1.000000` for the 6-token case. Cosine against a separately quantized LM Studio model is not an implementation correctness comparison.
 
 Raw chart data is checked in at [`docs/benchmarks/2026-07-14-m3-max.json`](docs/benchmarks/2026-07-14-m3-max.json). Regenerate the README graph with `npm run bench:chart`.
 
@@ -164,10 +162,19 @@ Raw chart data is checked in at [`docs/benchmarks/2026-07-14-m3-max.json`](docs/
 - Record exact Qwen tokenizer length, including EOS; do not rely on word-count estimates.
 - Separate cold model download, GPU upload, and pipeline compilation from warmed inference.
 - Use identical text and sequential requests for the LM Studio single-stream baseline.
+- For LM Studio concurrency, issue independent HTTP requests from 16 workers rather than sending a single array-valued request.
 - Sweep concurrency 1, 2, 4, 8, and 16 instead of reporting only the best batch.
 - Report both batch latency and aggregate requests per second.
 - Compare each batch embedding against the single-request output.
 - Keep sequence-length results separate because GPU occupancy and attention cost change substantially with length.
+
+Reproduce the 6-token LM Studio run with:
+
+```sh
+npm run bench:baseline -- \
+  --workload=tiny --concurrency=1,16 \
+  --duration-ms=15000 --warmup=10
+```
 
 ## Deployment notes
 

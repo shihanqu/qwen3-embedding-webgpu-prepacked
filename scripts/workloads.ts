@@ -1,4 +1,4 @@
-export type WorkloadName = 'short' | 'acceptance' | 'long' | 'mixed';
+export type WorkloadName = 'tiny' | 'sentence' | 'short' | 'acceptance' | 'long' | 'mixed';
 
 export interface Workload {
   name: WorkloadName;
@@ -22,6 +22,12 @@ function repeatToNominalTokens(sentence: string, tokens: number): string {
 }
 
 export function getWorkload(name: WorkloadName): Workload {
+  if (name === 'tiny') {
+    return { name, nominalTokens: 6, inputs: ['WebGPU embedding benchmark.'] };
+  }
+  if (name === 'sentence') {
+    return { name, nominalTokens: 17, inputs: [seedSentences[0]] };
+  }
   const nominalTokens = name === 'short' ? 32 : name === 'long' ? 512 : 128;
   const lengths = name === 'mixed' ? [32, 64, 128, 512] : seedSentences.map(() => nominalTokens);
   return {
@@ -30,4 +36,3 @@ export function getWorkload(name: WorkloadName): Workload {
     inputs: seedSentences.map((sentence, index) => repeatToNominalTokens(sentence, lengths[index])),
   };
 }
-
