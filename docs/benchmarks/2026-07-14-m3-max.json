@@ -1,0 +1,26 @@
+{
+  "date": "2026-07-14",
+  "hardware": {
+    "computer": "MacBook Pro (Mac15,10)",
+    "chip": "Apple M3 Max",
+    "cpu": "14 cores (10 performance, 4 efficiency)",
+    "gpu": "30 cores",
+    "memory": "96 GB unified memory"
+  },
+  "software": {
+    "os": "macOS 26.5.2 (25F84)",
+    "webgpu": "Chromium WebGPU with shader-f16 and subgroups",
+    "node": "24.x",
+    "llamaCppBuild": "b10015"
+  },
+  "models": {
+    "webgpu": "Qwen3-Embedding-0.6B Q4_0, quantized directly from Qwen official f16 GGUF",
+    "lmStudio": "text-embedding-qwen3-embedding-0.6b"
+  },
+  "rows": [
+    { "tokens": 6, "acceptance": true, "webgpuSingleRps": 57.33, "lmStudioSingleRps": 31.49, "webgpuBatch16Rps": 461.03, "scaling": 8.04 },
+    { "tokens": 17, "acceptance": false, "webgpuSingleRps": 51.06, "lmStudioSingleRps": 26.79, "webgpuBatch16Rps": 186.22, "scaling": 3.65 },
+    { "tokens": 26, "acceptance": false, "webgpuSingleRps": 49.44, "lmStudioSingleRps": 24.35, "webgpuBatch16Rps": 130.54, "scaling": 2.64 },
+    { "tokens": 105, "acceptance": false, "webgpuSingleRps": 25.65, "lmStudioSingleRps": 19.0, "webgpuBatch16Rps": 38.41, "scaling": 1.5 }
+  ]
+}

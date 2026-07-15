@@ -1,0 +1,32 @@
+{
+  "name": "qwen3-embedding-webgpu",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "model:download:q4km": "bash scripts/download-model.sh",
+    "model:prepare:q40": "bash scripts/prepare-q40.sh",
+    "bench:baseline": "tsx scripts/bench-endpoint.ts",
+    "bench:chart": "tsx scripts/render-benchmark-chart.ts",
+    "check": "npm test && npm run build",
+    "inspect:model": "tsx scripts/inspect-gguf.ts"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.7.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.15",
+    "@webgpu/types": "^0.1.71",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.5",
+    "vitest": "^3.2.4"
+  }
+}

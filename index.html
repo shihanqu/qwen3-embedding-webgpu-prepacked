@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Qwen3 Embedding WebGPU</title>
+    <style>
+      :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      body { max-width: 900px; margin: 48px auto; padding: 0 24px; background: #0b1020; color: #dce6ff; }
+      button { border: 0; border-radius: 8px; padding: 12px 18px; background: #79a8ff; color: #081020; font-weight: 700; cursor: pointer; }
+      button:disabled { opacity: .55; cursor: wait; }
+      pre { min-height: 260px; padding: 18px; border: 1px solid #263452; border-radius: 10px; background: #080c17; white-space: pre-wrap; }
+      .lede { color: #9caed0; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <h1>Qwen3 Embedding 0.6B · WebGPU</h1>
+    <p class="lede">Full Qwen3 embedding runtime with fused GGUF Q4 kernels and concurrent WebGPU micro-batching.</p>
+    <button id="run" data-testid="run-kernel-benchmark">Load model &amp; benchmark kernel</button>
+    <pre id="output" data-testid="output">Ready.</pre>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
