@@ -1,7 +1,7 @@
 import type { GGUFModel, GGUFTensorInfo } from '../gguf/types.ts';
 import { GGMLType } from '../gguf/types.ts';
 import { createBufferWithData } from './device.ts';
-import type { PrepackedModel } from '../prepacked/format.ts';
+import { PREPACKED_STORAGE_COMPACT, type PrepackedModel } from '../prepacked/format.ts';
 import { QuantMatmulKernel, type QuantMatmulRun } from './quant-matmul.ts';
 import {
   CausalAttentionKernel,
@@ -41,6 +41,10 @@ function activationBuffer(device: GPUDevice, elements: number, label: string, f3
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     label,
   });
+}
+
+function isPrepackedModel(model: GGUFModel | PrepackedModel): model is PrepackedModel {
+  return 'header' in model;
 }
 
 export class Qwen3ExecutionPlan {
@@ -182,35 +186,38 @@ export class Qwen3WebGPUModel {
   readonly embedding: EmbeddingLookupKernel;
   readonly prepackedNames = new Set<string>();
 
-  constructor(readonly device: GPUDevice, gguf: GGUFModel, prepacked?: PrepackedModel) {
+  constructor(readonly device: GPUDevice, source: GGUFModel | PrepackedModel) {
     this.q4 = new QuantMatmulKernel(device, GGMLType.Q4_K);
     this.q40 = new QuantMatmulKernel(device, GGMLType.Q4_0);
-    this.q40Prepacked = new QuantMatmulKernel(device, GGMLType.Q4_0, 'q4_0-tile32');
+    this.q40Prepacked = new QuantMatmulKernel(device, GGMLType.Q4_0, 'q4_0-tile32-compact');
     this.q6 = new QuantMatmulKernel(device, GGMLType.Q6_K);
     this.rmsNorm = new RmsNormKernel(device); this.swiglu = new SwiGLUKernel(device);
     this.qkNormRope = new QKNormRopeKernel(device); this.attention = new CausalAttentionKernel(device);
     this.pool = new LastTokenPoolKernel(device); this.embedding = new EmbeddingLookupKernel(device);
-    for (const tensor of gguf.tensors.values()) {
-      if (prepacked && tensor.type === GGMLType.Q4_0 && tensor.dimensions.length === 2) continue;
-      const bytes = new Uint8Array(gguf.buffer, tensor.byteOffset, tensor.byteLength);
-      this.weights.set(tensor.name, createBufferWithData(device, bytes, GPUBufferUsage.STORAGE, tensor.name));
-      this.tensorInfo.set(tensor.name, tensor);
-    }
-    if (prepacked) {
-      for (const tensor of prepacked.tensors.values()) {
-        const bytes = new Uint8Array(prepacked.buffer, tensor.byteOffset, tensor.byteLength);
+    if (isPrepackedModel(source)) {
+      for (const tensor of source.tensors.values()) {
+        const bytes = new Uint8Array(source.buffer, tensor.byteOffset, tensor.byteLength);
         this.weights.set(tensor.name, createBufferWithData(device, bytes, GPUBufferUsage.STORAGE, tensor.name));
         this.tensorInfo.set(tensor.name, {
           name: tensor.name,
-          dimensions: [tensor.k, tensor.n],
-          type: GGMLType.Q4_0,
+          dimensions: tensor.dimensions,
+          type: tensor.type,
           offset: tensor.offset,
           byteOffset: tensor.byteOffset,
           byteLength: tensor.byteLength,
-          elementCount: tensor.k * tensor.n,
+          elementCount: tensor.dimensions.reduce((product, value) => product * value, 1),
         });
-        this.prepackedNames.add(tensor.name);
+        if (tensor.storage === PREPACKED_STORAGE_COMPACT) this.prepackedNames.add(tensor.name);
       }
+      if (this.prepackedNames.size !== LAYERS * 5) throw new Error(`prepacked model has ${this.prepackedNames.size} compact matrices; expected ${LAYERS * 5}`);
+      return;
+    }
+
+    const gguf = source;
+    for (const tensor of gguf.tensors.values()) {
+      const bytes = new Uint8Array(gguf.buffer, tensor.byteOffset, tensor.byteLength);
+      this.weights.set(tensor.name, createBufferWithData(device, bytes, GPUBufferUsage.STORAGE, tensor.name));
+      this.tensorInfo.set(tensor.name, tensor);
     }
     const combineQ4 = (name: string, firstName: string, secondName: string) => {
       const first = gguf.tensors.get(firstName); const second = gguf.tensors.get(secondName);
@@ -223,13 +230,9 @@ export class Qwen3WebGPUModel {
       this.weights.set(name, createBufferWithData(device, bytes, GPUBufferUsage.STORAGE, name));
       this.tensorInfo.set(name, { name, dimensions: [first.dimensions[0], first.dimensions[1] + second.dimensions[1]], type: first.type, offset: 0, byteOffset: 0, byteLength: bytes.byteLength, elementCount: first.elementCount + second.elementCount });
     };
-    if (!prepacked) {
-      for (let layer = 0; layer < LAYERS; layer += 1) {
-        combineQ4(`blk.${layer}.attn_qk.weight`, `blk.${layer}.attn_q.weight`, `blk.${layer}.attn_k.weight`);
-        combineQ4(`blk.${layer}.ffn_gate_up.weight`, `blk.${layer}.ffn_gate.weight`, `blk.${layer}.ffn_up.weight`);
-      }
-    } else if (this.prepackedNames.size !== LAYERS * 5) {
-      throw new Error(`prepacked model has ${this.prepackedNames.size} matrices; expected ${LAYERS * 5}`);
+    for (let layer = 0; layer < LAYERS; layer += 1) {
+      combineQ4(`blk.${layer}.attn_qk.weight`, `blk.${layer}.attn_q.weight`, `blk.${layer}.attn_k.weight`);
+      combineQ4(`blk.${layer}.ffn_gate_up.weight`, `blk.${layer}.ffn_gate.weight`, `blk.${layer}.ffn_up.weight`);
     }
   }
 

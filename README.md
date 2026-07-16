@@ -10,11 +10,11 @@ The benchmark uses identical text for both runtimes and exact tokenizer lengths 
 
 | Input | LM Studio single | WebGPU single | LM Studio 16× aggregate | WebGPU 16× aggregate |
 |---:|---:|---:|---:|---:|
-| 15 tokens | 28.84 req/s | **60.25 req/s** | 30.71 req/s | **255.85 req/s** |
-| 50 tokens | 25.66 req/s | **40.01 req/s** | 27.25 req/s | **108.31 req/s** |
-| 150 tokens | 18.53 req/s | **22.21 req/s** | 19.41 req/s | **37.76 req/s** |
+| 15 tokens | 28.84 req/s | **66.78 req/s** | 30.71 req/s | **249.60 req/s** |
+| 50 tokens | 25.66 req/s | **41.72 req/s** | 27.25 req/s | **103.78 req/s** |
+| 150 tokens | 18.53 req/s | **21.63 req/s** | 19.41 req/s | **36.58 req/s** |
 
-At 16 concurrent requests, WebGPU delivers 8.33× LM Studio throughput at 15 tokens, 3.98× at 50 tokens, and 1.95× at 150 tokens.
+At 16 concurrent requests, WebGPU delivers 8.13× LM Studio throughput at 15 tokens, 3.81× at 50 tokens, and 1.88× at 150 tokens.
 
 The batch path is checked against the single-request embedding in every trial. Worst cosine agreement across the graphed trials was `0.999928` at 15 tokens, `0.999936` at 50 tokens, and `1.000000` at 150 tokens.
 
@@ -22,7 +22,7 @@ The batch path is checked against the single-request embedding in every trial. W
 
 Apple M3 Max, 30 core GPU.
 
-Results depend on the GPU, browser, power state, and thermals. The complete measurements and trial-level values are in [`docs/benchmarks/2026-07-15-webgpu-vs-lm-studio-m3-max.json`](docs/benchmarks/2026-07-15-webgpu-vs-lm-studio-m3-max.json).
+Results depend on the GPU, browser, power state, and thermals. The complete measurements and trial-level values are in [`docs/benchmarks/2026-07-16-webgpu-vs-lm-studio-m3-max.json`](docs/benchmarks/2026-07-16-webgpu-vs-lm-studio-m3-max.json).
 
 ## Expected system requirements
 
@@ -33,7 +33,7 @@ These are practical estimates rather than hard compatibility guarantees:
 | Browser | Chromium-based browser with WebGPU, `shader-f16`, and subgroup support | Current stable Chrome or Edge |
 | GPU | Apple Silicon or a modern NVIDIA/AMD GPU exposing the required WebGPU features | Recent discrete GPU or Apple Silicon with at least 4 GB of available GPU/shared memory |
 | System memory | 8 GB | 16 GB or more for 16 concurrent requests |
-| Storage and initial download | About 1 GB for the two model assets | 2 GB free for assets, browser cache, and build output |
+| Storage and initial download | About 384 MiB for the model pack | 1 GB free for the pack, browser cache, and build output |
 | Local development | Node.js 24 and npm | Current Node.js 24 LTS release |
 
 The browser must allow individual WebGPU storage-buffer bindings of at least 128 MiB. Systems with unified memory count available system memory toward GPU allocations. Actual memory use grows with batch size and sequence length.
@@ -43,9 +43,9 @@ The browser must allow individual WebGPU storage-buffer bindings of at least 128
 The runtime moves work that would normally happen during browser startup into a deterministic offline conversion step:
 
 - Q and K projection matrices are fused, as are the FFN gate and up matrices.
-- Q4_0 weights are rearranged into 32-row GPU tiles with four quantized values per aligned load.
-- Each packed word carries its FP16 scale beside its reordered Q4 nibbles, allowing the shader to decode a vector with one load.
-- The browser uploads those projection tensors directly without concatenating matrices or repacking quantized blocks on the CPU.
+- Q4_0 projection weights are rearranged into compact 32-row GPU tiles. Each 32-value block occupies 20 bytes: one aligned scale word and four packed-quant words.
+- Token embeddings, normalization weights, metadata, and every other runtime tensor are copied into the same self-contained file.
+- The browser uploads all 254 tensors directly without parsing a GGUF, concatenating matrices, or repacking quantized blocks on the CPU.
 
 The inference path is implemented with custom WGSL rather than a general-purpose graph runtime:
 
@@ -58,16 +58,15 @@ The inference path is implemented with custom WGSL rather than a general-purpose
 
 Together, the prepacked layout reduces startup CPU work and the custom execution paths increase both single-stream and concurrent throughput.
 
-## Required model files
+## Required model file
 
-The app loads these pinned GitHub Release assets by default:
+The app loads one pinned GitHub Release asset by default:
 
-| Artifact | Purpose | Size | SHA-256 / source |
+| Artifact | Contents | Size | SHA-256 |
 |---|---|---:|---|
-| [`qwen3-embedding-0.6b-q4_0-webgpu.gguf`](https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/prepacked-v1/qwen3-embedding-0.6b-q4_0-webgpu.gguf) | Metadata, token embeddings, normalization weights, and source identity | 364 MiB | `4acbfc4947344ca4d4a215ee35e601c5e6f505172b517da194460e2ff113433e` |
-| [`qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack`](https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/prepacked-v1/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack) | 140 GPU-ready Q4_0 projection matrices | 420 MiB | [`52c4b6…d24b3`](docs/prepacked-v1.sha256); its header pins the GGUF hash above |
+| [`qwen3-embedding-0.6b-q4_0-webgpu.wgpack`](https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/wgpack-v2/qwen3-embedding-0.6b-q4_0-webgpu.wgpack) | Complete Qwen3 Embedding 0.6B model: 140 compact Q4_0 projection matrices plus all 114 auxiliary tensors and required metadata | 384 MiB | [`467882…f04ce`](docs/wgpack-v2.sha256) |
 
-The `.wgpack` is a derived representation of the same model, not a second model. Model artifacts retain the upstream Apache-2.0 license; source code is MIT licensed.
+No GGUF is downloaded or parsed during normal use. The pack header records the SHA-256 of the exact source GGUF used to build it. Model artifacts retain the upstream Apache-2.0 license; source code is MIT licensed.
 
 ## Quick start
 
@@ -78,33 +77,28 @@ npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173/?matrix=1`, click **Load model & benchmark kernel**, and look for `BENCHMARK_MATRIX_JSON`. Vite proxies both release assets through the local origin to avoid cross-origin model-loading problems.
+Open `http://127.0.0.1:5173/?matrix=1`, click **Load model & benchmark kernel**, and look for `BENCHMARK_MATRIX_JSON`. Vite proxies the release asset through the local origin to avoid cross-origin model-loading problems.
 
 For local or offline copies:
 
 ```sh
 npm run model:download:webgpu
-curl -L \
-  -o models/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack \
-  https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/prepacked-v1/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack
-
-VITE_Q40_MODEL_URL=/models/qwen3-embedding-0.6b-q4_0-webgpu.gguf \
-VITE_PREPACKED_MODEL_URL=/models/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack \
+VITE_PREPACKED_MODEL_URL=/models/qwen3-embedding-0.6b-q4_0-webgpu.wgpack \
   npm run dev
 ```
 
 ## Generate the prepacked model
 
-Place the exact Q4_0 source model in `models/`, then run:
+Only pack authors need the source GGUF. Place the exact Q4_0 source model in `models/`, then run:
 
 ```sh
 npm ci
 npm run model:prepack -- \
   models/qwen3-embedding-0.6b-q4_0-webgpu.gguf \
-  models/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack
+  models/qwen3-embedding-0.6b-q4_0-webgpu.wgpack
 ```
 
-The generator is deterministic. The format consists of an 8-byte `WGPACK01` magic value, a JSON header, and 256-byte-aligned tensor payloads. Output rows are grouped into 32-row tiles; K is grouped into 32-value Q4 blocks. See `src/prepacked/format.ts` and `scripts/prepack-model.ts` for the authoritative layout.
+The generator is deterministic. The format consists of an 8-byte `WGPACK02` magic value, a JSON header, and 256-byte-aligned tensor payloads. Projection rows are grouped into 32-row tiles; K is grouped into 32-value Q4 blocks. Non-projection tensors retain their source bytes and GGML type. The resulting pack is 402,949,120 bytes—only 20.6 MiB (5.7%) larger than its 364 MiB source GGUF. See `src/prepacked/format.ts` and `scripts/prepack-model.ts` for the authoritative layout.
 
 ## Reproduce the comparison
 

@@ -22,35 +22,35 @@
   
     <text x="64" y="168" class="row-label" text-anchor="end">15 tok</text>
     <rect x="80" y="132" width="177.14676993596484" height="22" rx="4" class="lm"/>
-    <rect x="80" y="160" width="370.08507653578346" height="22" rx="4" class="gpu"/>
+    <rect x="80" y="160" width="410.24858202034227" height="22" rx="4" class="gpu"/>
     <text x="265.1467699359648" y="148" class="value" text-anchor="start">28.84</text>
-    <text x="458.08507653578346" y="176" class="value" text-anchor="start">60.25</text>
+    <text x="498.24858202034227" y="176" class="value" text-anchor="start">66.78</text>
     <rect x="650" y="132" width="42.770594901076606" height="22" rx="4" class="lm"/>
-    <rect x="650" y="160" width="356.36616166265077" height="22" rx="4" class="gpu"/>
+    <rect x="650" y="160" width="347.6547788040005" height="22" rx="4" class="gpu"/>
     <text x="700.7705949010766" y="148" class="value" text-anchor="start">30.71</text>
-    <text x="1014.3661616626507" y="176" class="value" text-anchor="start">255.85</text>
+    <text x="1005.6547788040004" y="176" class="value" text-anchor="start">249.60</text>
   
     <text x="64" y="244" class="row-label" text-anchor="end">50 tok</text>
     <rect x="80" y="208" width="157.65062573778565" height="22" rx="4" class="lm"/>
-    <rect x="80" y="236" width="245.77818804083245" height="22" rx="4" class="gpu"/>
+    <rect x="80" y="236" width="256.29945313167934" height="22" rx="4" class="gpu"/>
     <text x="245.65062573778565" y="224" class="value" text-anchor="start">25.66</text>
-    <text x="333.77818804083245" y="252" class="value" text-anchor="start">40.01</text>
+    <text x="344.29945313167934" y="252" class="value" text-anchor="start">41.72</text>
     <rect x="650" y="208" width="37.95239759710234" height="22" rx="4" class="lm"/>
-    <rect x="650" y="236" width="150.85435785391755" height="22" rx="4" class="gpu"/>
+    <rect x="650" y="236" width="144.5491087055952" height="22" rx="4" class="gpu"/>
     <text x="695.9523975971024" y="224" class="value" text-anchor="start">27.25</text>
-    <text x="808.8543578539176" y="252" class="value" text-anchor="start">108.31</text>
+    <text x="802.5491087055952" y="252" class="value" text-anchor="start">103.78</text>
   
     <text x="64" y="320" class="row-label" text-anchor="end">150 tok</text>
     <rect x="80" y="284" width="113.84504042081092" height="22" rx="4" class="lm"/>
-    <rect x="80" y="312" width="136.42153620050166" height="22" rx="4" class="gpu"/>
+    <rect x="80" y="312" width="132.89611541444071" height="22" rx="4" class="gpu"/>
     <text x="201.8450404208109" y="300" class="value" text-anchor="start">18.53</text>
-    <text x="224.42153620050166" y="328" class="value" text-anchor="start">22.21</text>
+    <text x="220.89611541444071" y="328" class="value" text-anchor="start">21.63</text>
     <rect x="650" y="284" width="27.031184629281938" height="22" rx="4" class="lm"/>
-    <rect x="650" y="312" width="52.59153202160249" height="22" rx="4" class="gpu"/>
+    <rect x="650" y="312" width="50.94960594080736" height="22" rx="4" class="gpu"/>
     <text x="685.0311846292819" y="300" class="value" text-anchor="start">19.41</text>
-    <text x="710.5915320216025" y="328" class="value" text-anchor="start">37.76</text>
+    <text x="708.9496059408074" y="328" class="value" text-anchor="start">36.58</text>
   
   <rect x="80" y="430" width="16" height="16" rx="3" class="lm"/><text x="104" y="443" class="caption" text-anchor="start">LM Studio</text>
   <rect x="220" y="430" width="16" height="16" rx="3" class="gpu"/><text x="244" y="443" class="caption" text-anchor="start">WebGPU</text>
-  <text x="50" y="486" class="caption" text-anchor="start">Measured 2026-07-15; exact token counts include EOS; WebGPU is the median of three warmed trials; no request errors.</text>
+  <text x="50" y="486" class="caption" text-anchor="start">Measured 2026-07-16; exact token counts include EOS; WebGPU is the median of three warmed trials; no request errors.</text>
 </svg>

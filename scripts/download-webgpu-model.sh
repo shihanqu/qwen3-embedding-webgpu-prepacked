@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-filename="qwen3-embedding-0.6b-q4_0-webgpu.gguf"
-url="${QWEN3_WEBGPU_MODEL_URL:-https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/prepacked-v1/$filename}"
+filename="qwen3-embedding-0.6b-q4_0-webgpu.wgpack"
+url="${QWEN3_WEBGPU_MODEL_URL:-https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/wgpack-v2/$filename}"
 out="${QWEN3_WEBGPU_MODEL_PATH:-models/$filename}"
-expected_sha256="4acbfc4947344ca4d4a215ee35e601c5e6f505172b517da194460e2ff113433e"
+expected_sha256="4678826b4e9ab225dedd45c930b5f5e2db0aa6b919239c5404c23524156f04ce"
 
 mkdir -p "$(dirname "$out")"
 

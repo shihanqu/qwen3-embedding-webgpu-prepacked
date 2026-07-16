@@ -99,10 +99,10 @@ fn dequant4(row:u32,column:u32)->vec4<f16>{
 const q40PrepackedDequant = /* wgsl */`
 fn dequant4(row:u32,column:u32)->vec4<f16>{
   let tile=row/32u;let local_row=row&31u;let k_block=column/32u;
-  let block=((tile*params.blocks_per_row+k_block)*32u+local_row)*8u;
-  let word=weights[block+(column&31u)/4u];
-  let scale=f16(unpack2x16float(word).y);
-  let quants=(vec4<u32>(word)>>vec4<u32>(0u,4u,8u,12u))&vec4<u32>(15u);
+  let block=((tile*params.blocks_per_row+k_block)*32u+local_row)*5u;
+  let scale=f16(unpack2x16float(weights[block]).x);
+  let packed=unpack4xU8(weights[block+1u+(column&15u)/4u]);
+  let quants=select(packed&vec4<u32>(15u),packed>>vec4<u32>(4u),vec4<bool>((column&31u)>=16u));
   return vec4<f16>(scale)*(vec4<f16>(quants)-vec4<f16>(8.0));
 }
 `;
@@ -344,7 +344,7 @@ export interface QuantMatmulRun {
   k: number;
 }
 
-export type QuantWeightLayout = 'gguf' | 'q4_0-tile32';
+export type QuantWeightLayout = 'gguf' | 'q4_0-tile32-compact';
 
 export class QuantMatmulKernel {
   readonly latencyPipeline: GPUComputePipeline;
@@ -354,9 +354,9 @@ export class QuantMatmulKernel {
   readonly subgroupPipeline: GPUComputePipeline;
 
   constructor(readonly device: GPUDevice, readonly type: GGMLType.Q4_0 | GGMLType.Q4_K | GGMLType.Q6_K, readonly layout: QuantWeightLayout = 'gguf') {
-    if (layout === 'q4_0-tile32' && type !== GGMLType.Q4_0) throw new Error('prepacked tile32 layout only supports Q4_0 sources');
+    if (layout === 'q4_0-tile32-compact' && type !== GGMLType.Q4_0) throw new Error('prepacked tile32 layout only supports Q4_0 sources');
     this.latencyPipeline = this.createPipeline(128, 'latency');
-    this.throughputPipeline = this.createPipeline(64, 'throughput', layout === 'q4_0-tile32', layout === 'q4_0-tile32');
+    this.throughputPipeline = this.createPipeline(64, 'throughput', layout === 'q4_0-tile32-compact', layout === 'q4_0-tile32-compact');
     this.midBatchPipeline = this.createMidBatchPipeline();
     this.batchPipeline = this.createBatchPipeline();
     this.subgroupPipeline = this.createSubgroupPipeline();
@@ -397,7 +397,7 @@ export class QuantMatmulKernel {
   }
 
   private dequantShader(): string {
-    if (this.layout === 'q4_0-tile32') return q40PrepackedDequant;
+    if (this.layout === 'q4_0-tile32-compact') return q40PrepackedDequant;
     return this.type===GGMLType.Q4_0?q40Dequant:this.type===GGMLType.Q4_K?q4Dequant:q6Dequant;
   }
 
@@ -426,7 +426,7 @@ export class QuantMatmulKernel {
       GPUBufferUsage.UNIFORM,
       'matmul params',
     );
-    const pipeline = this.layout === 'q4_0-tile32' && m >= 512 ? this.subgroupPipeline : m >= 512 ? this.batchPipeline : m >= 256 ? this.midBatchPipeline : m >= 64 ? this.throughputPipeline : this.latencyPipeline;
+    const pipeline = this.layout === 'q4_0-tile32-compact' && m >= 512 ? this.subgroupPipeline : m >= 512 ? this.batchPipeline : m >= 256 ? this.midBatchPipeline : m >= 64 ? this.throughputPipeline : this.latencyPipeline;
     const bindGroup = this.device.createBindGroup({
       layout: pipeline.getBindGroupLayout(0),
       entries: [

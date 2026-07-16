@@ -13,7 +13,7 @@ interface BenchmarkData {
   rows: Row[];
 }
 
-const inputPath = resolve('docs/benchmarks/2026-07-15-webgpu-vs-lm-studio-m3-max.json');
+const inputPath = resolve('docs/benchmarks/2026-07-16-webgpu-vs-lm-studio-m3-max.json');
 const outputPath = resolve('docs/lm-studio-comparison.svg');
 const data = JSON.parse(readFileSync(inputPath, 'utf8')) as BenchmarkData;
 const width = 1120;

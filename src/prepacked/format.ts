@@ -1,11 +1,19 @@
-const MAGIC = 'WGPACK01';
+import { GGMLType } from '../gguf/types.ts';
+
+const MAGIC = 'WGPACK02';
 const PRELUDE_BYTES = 12;
 const DATA_ALIGNMENT = 256;
 
-export const PREPACKED_LAYOUT = 'q4_0-tile32-vec4-v2' as const;
+export const PREPACKED_LAYOUT = 'q4_0-tile32-compact-v2' as const;
 export const PREPACKED_TILE_ROWS = 32;
 export const PREPACKED_BLOCK_VALUES = 32;
-export const PREPACKED_BLOCK_BYTES = 32;
+export const PREPACKED_BLOCK_BYTES = 20;
+export const PREPACKED_STORAGE_COMPACT = 'q4_0-tile32-compact' as const;
+export const PREPACKED_STORAGE_RAW = 'raw' as const;
+
+export type PrepackedMetadataScalar = string | number | boolean;
+export type PrepackedMetadataValue = PrepackedMetadataScalar | PrepackedMetadataScalar[];
+export type PrepackedTensorStorage = typeof PREPACKED_STORAGE_COMPACT | typeof PREPACKED_STORAGE_RAW;
 
 export interface Q40TensorPart {
   name: string;
@@ -16,26 +24,30 @@ export interface Q40TensorPart {
 
 export interface PackedTensorBytes {
   name: string;
-  k: number;
-  n: number;
+  dimensions: number[];
+  type: GGMLType;
+  storage: PrepackedTensorStorage;
   bytes: Uint8Array;
 }
 
 export interface PrepackedTensorHeader {
   name: string;
-  k: number;
-  n: number;
+  dimensions: number[];
+  type: GGMLType;
+  storage: PrepackedTensorStorage;
   offset: number;
   byteLength: number;
 }
 
 export interface PrepackedHeader {
-  version: 1;
+  version: 2;
   sourceSha256: string;
+  sourceBytes: number;
   layout: typeof PREPACKED_LAYOUT;
   tileRows: typeof PREPACKED_TILE_ROWS;
   blockValues: typeof PREPACKED_BLOCK_VALUES;
   blockBytes: typeof PREPACKED_BLOCK_BYTES;
+  metadata: Record<string, PrepackedMetadataValue>;
   tensors: PrepackedTensorHeader[];
 }
 
@@ -77,40 +89,48 @@ export function packQ40Tile32(name: string, parts: readonly Q40TensorPart[]): Pa
         const { part, row } = rowParts[outputRow];
         const source = (row * kBlocks + kBlock) * 18;
         const destination = ((tile * kBlocks + kBlock) * PREPACKED_TILE_ROWS + localRow) * PREPACKED_BLOCK_BYTES;
-        const view = new DataView(output.buffer, output.byteOffset + destination, PREPACKED_BLOCK_BYTES);
-        for (let vector = 0; vector < 8; vector += 1) {
-          const highNibble = vector >= 4;
-          const sourceVector = vector & 3;
-          const scaleBits = part.bytes[source] | (part.bytes[source + 1] << 8);
-          let packedNibbles = 0;
-          for (let lane = 0; lane < 4; lane += 1) {
-            const packedByte = part.bytes[source + 2 + sourceVector * 4 + lane];
-            const quant = highNibble ? packedByte >> 4 : packedByte & 15;
-            packedNibbles |= quant << (lane * 4);
-          }
-          view.setUint32(vector * 4, packedNibbles | (scaleBits << 16), true);
-        }
+        output[destination] = part.bytes[source];
+        output[destination + 1] = part.bytes[source + 1];
+        output.set(part.bytes.subarray(source + 2, source + 18), destination + 4);
       }
     }
   }
-  return { name, k, n, bytes: output };
+  return { name, dimensions: [k, n], type: GGMLType.Q4_0, storage: PREPACKED_STORAGE_COMPACT, bytes: output };
 }
 
-export function buildPrepackedFile(sourceSha256: string, tensors: readonly PackedTensorBytes[]): Uint8Array {
+export function rawTensor(name: string, dimensions: number[], type: GGMLType, bytes: Uint8Array): PackedTensorBytes {
+  return { name, dimensions: [...dimensions], type, storage: PREPACKED_STORAGE_RAW, bytes };
+}
+
+export function buildPrepackedFile(
+  sourceSha256: string,
+  sourceBytes: number,
+  metadata: Record<string, PrepackedMetadataValue>,
+  tensors: readonly PackedTensorBytes[],
+): Uint8Array {
   let relativeOffset = 0;
   const entries: PrepackedTensorHeader[] = tensors.map((tensor) => {
     relativeOffset = align(relativeOffset, DATA_ALIGNMENT);
-    const entry = { name: tensor.name, k: tensor.k, n: tensor.n, offset: relativeOffset, byteLength: tensor.bytes.byteLength };
+    const entry = {
+      name: tensor.name,
+      dimensions: [...tensor.dimensions],
+      type: tensor.type,
+      storage: tensor.storage,
+      offset: relativeOffset,
+      byteLength: tensor.bytes.byteLength,
+    };
     relativeOffset += tensor.bytes.byteLength;
     return entry;
   });
   const header: PrepackedHeader = {
-    version: 1,
+    version: 2,
     sourceSha256,
+    sourceBytes,
     layout: PREPACKED_LAYOUT,
     tileRows: PREPACKED_TILE_ROWS,
     blockValues: PREPACKED_BLOCK_VALUES,
     blockBytes: PREPACKED_BLOCK_BYTES,
+    metadata,
     tensors: entries,
   };
   const headerBytes = new TextEncoder().encode(JSON.stringify(header));
@@ -124,11 +144,13 @@ export function buildPrepackedFile(sourceSha256: string, tensors: readonly Packe
 }
 
 export function parsePrepackedModel(buffer: ArrayBuffer): PrepackedModel {
+  if (buffer.byteLength < PRELUDE_BYTES) throw new Error('prepacked model is shorter than its prelude');
   const magic = new TextDecoder().decode(new Uint8Array(buffer, 0, 8));
   if (magic !== MAGIC) throw new Error(`invalid prepacked model magic ${JSON.stringify(magic)}`);
   const headerLength = new DataView(buffer).getUint32(8, true);
+  if (PRELUDE_BYTES + headerLength > buffer.byteLength) throw new Error('prepacked model header extends past end of file');
   const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, PRELUDE_BYTES, headerLength))) as PrepackedHeader;
-  if (header.version !== 1 || header.layout !== PREPACKED_LAYOUT || header.tileRows !== 32 || header.blockValues !== 32 || header.blockBytes !== 32) {
+  if (header.version !== 2 || header.layout !== PREPACKED_LAYOUT || header.tileRows !== 32 || header.blockValues !== 32 || header.blockBytes !== 20) {
     throw new Error(`unsupported prepacked layout ${header.layout}`);
   }
   const dataOffset = align(PRELUDE_BYTES + headerLength, DATA_ALIGNMENT);
@@ -137,6 +159,10 @@ export function parsePrepackedModel(buffer: ArrayBuffer): PrepackedModel {
     const byteOffset = dataOffset + tensor.offset;
     if (byteOffset + tensor.byteLength > buffer.byteLength) throw new Error(`${tensor.name} extends past end of prepacked file`);
     if (tensors.has(tensor.name)) throw new Error(`duplicate prepacked tensor ${tensor.name}`);
+    if (tensor.storage === PREPACKED_STORAGE_COMPACT && (tensor.type !== GGMLType.Q4_0 || tensor.dimensions.length !== 2)) {
+      throw new Error(`${tensor.name} has invalid compact Q4_0 metadata`);
+    }
+    if (tensor.storage !== PREPACKED_STORAGE_COMPACT && tensor.storage !== PREPACKED_STORAGE_RAW) throw new Error(`${tensor.name} has unsupported storage ${tensor.storage}`);
     tensors.set(tensor.name, { ...tensor, byteOffset });
   }
   return { header, tensors, buffer, dataOffset };

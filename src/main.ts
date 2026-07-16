@@ -1,6 +1,6 @@
 import { GGUFReader, QWEN3_METADATA_KEYS } from './gguf/reader.ts';
 import { dequantizeQ4KBlock, dequantizeQ6KBlock, halfToFloat } from './gguf/quantization.ts';
-import { GGMLType } from './gguf/types.ts';
+import { GGMLType, type GGUFModel } from './gguf/types.ts';
 import { toFloat16Bits } from './math/f16.ts';
 import { requestWebGPUDevice } from './webgpu/device.ts';
 import { Qwen3EmbeddingEngine, type TokenizerLike } from './webgpu/embedding-engine.ts';
@@ -8,12 +8,12 @@ import { QuantMatmulKernel } from './webgpu/quant-matmul.ts';
 import { CausalAttentionKernel, LastTokenPoolKernel, QKNormRopeKernel, RmsNormKernel, SwiGLUKernel } from './webgpu/ops.ts';
 import { Qwen3WebGPUModel } from './webgpu/model.ts';
 import { COMPARISON_TOKEN_COUNTS, getComparisonWorkload, getWorkload } from '../scripts/workloads.ts';
-import { parsePrepackedModel } from './prepacked/format.ts';
+import { PREPACKED_STORAGE_COMPACT, parsePrepackedModel, type PrepackedModel } from './prepacked/format.ts';
 
 const runButton = document.querySelector<HTMLButtonElement>('#run')!;
 const output = document.querySelector<HTMLElement>('#output')!;
 const DEFAULT_WEBGPU_MODEL_URL = '/model-release/qwen3-embedding-0.6b-q4_0-webgpu.gguf';
-const DEFAULT_PREPACKED_MODEL_URL = '/prepacked-release/qwen3-embedding-0.6b-q4_0-webgpu-tile32.wgpack';
+const DEFAULT_PREPACKED_MODEL_URL = '/prepacked-release/qwen3-embedding-0.6b-q4_0-webgpu.wgpack';
 
 function write(line: string): void {
   output.textContent += `\n${line}`;
@@ -74,23 +74,30 @@ runButton.addEventListener('click', async () => {
     const modelUrl = q40
       ? (import.meta.env.VITE_Q40_MODEL_URL?.trim() || DEFAULT_WEBGPU_MODEL_URL)
       : '/models/qwen3-embedding-0.6b-q4_k_m.gguf';
-    write(q40 ? `Fetching 364 MiB Q4_0 WebGPU model${usePrepacked ? ' + 420 MiB tile32 pack' : ''}…` : 'Fetching 378 MiB Q4_K_M model…');
     const prepackedUrl = import.meta.env.VITE_PREPACKED_MODEL_URL?.trim() || DEFAULT_PREPACKED_MODEL_URL;
-    const [response, prepackedResponse] = await Promise.all([
-      fetch(modelUrl),
-      usePrepacked ? fetch(prepackedUrl) : Promise.resolve(undefined),
-    ]);
-    if (!response.ok) throw new Error(`model fetch failed: ${response.status}`);
-    if (prepackedResponse && !prepackedResponse.ok) throw new Error(`prepacked model fetch failed: ${prepackedResponse.status}`);
-    const buffer = await response.arrayBuffer();
-    const model = new GGUFReader(buffer).parse({ metadataKeys: QWEN3_METADATA_KEYS });
-    const prepacked = prepackedResponse ? parsePrepackedModel(await prepackedResponse.arrayBuffer()) : undefined;
-    write(`Parsed ${model.metadata.get('general.name')}: ${model.tensors.size} tensors`);
-    if (prepacked) write(`Parsed ${prepacked.tensors.size} prepacked ${prepacked.header.layout} matrices`);
+    let buffer: ArrayBuffer | undefined;
+    let model: GGUFModel | undefined;
+    let prepacked: PrepackedModel | undefined;
+    if (usePrepacked) {
+      write('Fetching self-contained compact WebGPU model…');
+      const response = await fetch(prepackedUrl);
+      if (!response.ok) throw new Error(`prepacked model fetch failed: ${response.status}`);
+      prepacked = parsePrepackedModel(await response.arrayBuffer());
+      const compact = Array.from(prepacked.tensors.values()).filter((tensor) => tensor.storage === PREPACKED_STORAGE_COMPACT).length;
+      write(`Parsed ${prepacked.header.metadata['general.name'] ?? 'Qwen3 Embedding 0.6B'}: ${prepacked.tensors.size} tensors (${compact} compact GPU matrices)`);
+    } else {
+      write(q40 ? 'Fetching 364 MiB Q4_0 GGUF fallback…' : 'Fetching 378 MiB Q4_K_M model…');
+      const response = await fetch(modelUrl);
+      if (!response.ok) throw new Error(`model fetch failed: ${response.status}`);
+      buffer = await response.arrayBuffer();
+      model = new GGUFReader(buffer).parse({ metadataKeys: QWEN3_METADATA_KEYS });
+      write(`Parsed ${model.metadata.get('general.name')}: ${model.tensors.size} tensors`);
+    }
     const acceptanceOnly = searchParams.has('acceptance') || searchParams.has('hundred') || searchParams.has('matrix') || searchParams.has('profile') || searchParams.has('sweep') || searchParams.has('scheduler');
     const skipMicrobenchmarks = acceptanceOnly || q40;
 
     if (!skipMicrobenchmarks) {
+    if (!model || !buffer) throw new Error('GGUF kernel benchmark requires a GGUF model');
     const tensor = model.tensors.get('blk.0.ffn_gate.weight');
     if (!tensor || tensor.type !== GGMLType.Q4_K) throw new Error('expected Q4_K gate tensor');
     const [k, n] = tensor.dimensions;
@@ -177,7 +184,7 @@ runButton.addEventListener('click', async () => {
 
     write('Uploading all model tensors to the GPU…');
     device.pushErrorScope('validation');
-    const runtime = new Qwen3WebGPUModel(device, model, prepacked);
+    const runtime = new Qwen3WebGPUModel(device, prepacked ?? model!);
     const uploadError = await device.popErrorScope();
     if (uploadError) throw new Error(`model upload validation: ${uploadError.message}`);
     write('Loading tokenizer…');
