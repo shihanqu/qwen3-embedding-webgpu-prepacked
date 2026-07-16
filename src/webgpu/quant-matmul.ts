@@ -264,6 +264,49 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_id) l
 `;
 }
 
+function createCompactBatchShaderMain(): string {
+  return /* wgsl */`
+var<workgroup> tile_a:array<vec4<f16>,256>;
+var<workgroup> tile_w:array<vec4<f16>,256>;
+@compute @workgroup_size(8,8,1)
+fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_id) local:vec3<u32>,@builtin(local_invocation_index) lane:u32){
+  let m0=group.y*32u+local.y;let n0=group.x*32u+local.x;
+  var sums0=vec4<f16>(0.0);var sums1=vec4<f16>(0.0);var sums2=vec4<f16>(0.0);var sums3=vec4<f16>(0.0);
+  for(var k_block=0u;k_block<params.blocks_per_row;k_block+=1u){
+    if(lane<32u){
+      let row=lane;let record=((group.x*params.blocks_per_row+k_block)*32u+row)*5u;
+      let scale=f16(unpack2x16float(weights[record]).x);
+      for(var word=0u;word<4u;word+=1u){
+        let packed=unpack4xU8(weights[record+1u+word]);
+        tile_w[row*8u+word]=vec4<f16>(scale)*(vec4<f16>(packed&vec4<u32>(15u))-vec4<f16>(8.0));
+        tile_w[row*8u+word+4u]=vec4<f16>(scale)*(vec4<f16>(packed>>vec4<u32>(4u))-vec4<f16>(8.0));
+      }
+    }else{
+      let row=lane-32u;let global_m=group.y*32u+row;
+      for(var vector=0u;vector<8u;vector+=1u){
+        tile_a[row*8u+vector]=select(vec4<f16>(0.0),input[(global_m*params.k+k_block*32u+vector*4u)/4u],global_m<params.m);
+      }
+    }
+    workgroupBarrier();
+    let a0=local.y*8u;let a1=(local.y+8u)*8u;let a2=(local.y+16u)*8u;let a3=(local.y+24u)*8u;
+    let w0=local.x*8u;let w1=(local.x+8u)*8u;let w2=(local.x+16u)*8u;let w3=(local.x+24u)*8u;
+    for(var k4=0u;k4<8u;k4+=1u){
+      let b0=tile_w[w0+k4];let b1=tile_w[w1+k4];let b2=tile_w[w2+k4];let b3=tile_w[w3+k4];
+      let av0=tile_a[a0+k4];let av1=tile_a[a1+k4];let av2=tile_a[a2+k4];let av3=tile_a[a3+k4];
+      sums0+=vec4<f16>(dot(av0,b0),dot(av0,b1),dot(av0,b2),dot(av0,b3));
+      sums1+=vec4<f16>(dot(av1,b0),dot(av1,b1),dot(av1,b2),dot(av1,b3));
+      sums2+=vec4<f16>(dot(av2,b0),dot(av2,b1),dot(av2,b2),dot(av2,b3));
+      sums3+=vec4<f16>(dot(av3,b0),dot(av3,b1),dot(av3,b2),dot(av3,b3));
+    }
+    workgroupBarrier();
+  }
+  let rows=array<u32,4>(m0,m0+8u,m0+16u,m0+24u);let cols=array<u32,4>(n0,n0+8u,n0+16u,n0+24u);
+  let all_sums=array<vec4<f16>,4>(sums0,sums1,sums2,sums3);
+  for(var r=0u;r<4u;r+=1u){for(var c=0u;c<4u;c+=1u){if(rows[r]<params.m&&cols[c]<params.n){output[rows[r]*params.n+cols[c]]=all_sums[r][c];}}}
+}
+`;
+}
+
 function createMidBatchShaderMain(): string {
   return /* wgsl */`
 var<workgroup> tile_a: array<vec4<f16>, 256>;
@@ -333,6 +376,38 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(subgroup_invocation_id
 `;
 }
 
+function createCompactSubgroupShaderMain(): string {
+  const sumDeclarations = Array.from({ length: SUBGROUP_ROWS }, (_, row) => `var sum${row}=f16(0.0);`).join('\n  ');
+  const lowAccumulations = Array.from({ length: SUBGROUP_ROWS }, (_, row) => `sum${row}+=dot(subgroupBroadcast(own_activation_low,${row}u),weight_low);`).join('\n    ');
+  const highAccumulations = Array.from({ length: SUBGROUP_ROWS }, (_, row) => `sum${row}+=dot(subgroupBroadcast(own_activation_high,${row}u),weight_high);`).join('\n    ');
+  const stores = Array.from({ length: SUBGROUP_ROWS }, (_, row) => `if(m_base+${row}u<params.m){output[(m_base+${row}u)*params.n+n]=sum${row};}`).join('\n    ');
+  return /* wgsl */`
+@compute @workgroup_size(32)
+fn main(@builtin(workgroup_id) group: vec3<u32>,@builtin(subgroup_invocation_id) lane:u32){
+  let n=group.x*32u+lane;let m_base=group.y*${SUBGROUP_ROWS}u;
+  ${sumDeclarations}
+  for(var k_block=0u;k_block<params.blocks_per_row;k_block+=1u){
+    let record=((group.x*params.blocks_per_row+k_block)*32u+lane)*5u;
+    let scale=f16(unpack2x16float(weights[record]).x);
+    for(var word=0u;word<4u;word+=1u){
+      let packed=unpack4xU8(weights[record+1u+word]);
+      let weight_low=vec4<f16>(scale)*(vec4<f16>(packed&vec4<u32>(15u))-vec4<f16>(8.0));
+      let weight_high=vec4<f16>(scale)*(vec4<f16>(packed>>vec4<u32>(4u))-vec4<f16>(8.0));
+      let column_low=k_block*32u+word*4u;let column_high=column_low+16u;
+      var own_activation_low=vec4<f16>(0.0);var own_activation_high=vec4<f16>(0.0);
+      if(lane<${SUBGROUP_ROWS}u&&m_base+lane<params.m){
+        own_activation_low=input[((m_base+lane)*params.k+column_low)/4u];
+        own_activation_high=input[((m_base+lane)*params.k+column_high)/4u];
+      }
+      ${lowAccumulations}
+      ${highAccumulations}
+    }
+  }
+  if(n<params.n){${stores}}
+}
+`;
+}
+
 export interface QuantMatmulRun {
   input: GPUBuffer;
   weights: GPUBuffer;
@@ -363,7 +438,9 @@ export class QuantMatmulKernel {
   }
 
   private createSubgroupPipeline(): GPUComputePipeline {
-    const code=this.shaderPrelude()+this.dequantShader()+createSubgroupShaderMain();
+    const code=this.layout==='q4_0-tile32-compact'
+      ? this.shaderPrelude()+createCompactSubgroupShaderMain()
+      : this.shaderPrelude()+this.dequantShader()+createSubgroupShaderMain();
     const module=this.device.createShaderModule({code,label:'prepacked subgroup matmul shader'});
     return this.device.createComputePipeline({layout:'auto',compute:{module,entryPoint:'main'},label:'prepacked subgroup matmul'});
   }
@@ -378,7 +455,9 @@ export class QuantMatmulKernel {
 
   private createBatchPipeline(): GPUComputePipeline {
     const dequant=this.dequantShader();
-    const code=this.shaderPrelude()+dequant+createBatchShaderMain();
+    const code=this.layout==='q4_0-tile32-compact'
+      ? this.shaderPrelude()+createCompactBatchShaderMain()
+      : this.shaderPrelude()+dequant+createBatchShaderMain();
     const quantName=this.type===GGMLType.Q4_0?'Q4_0':this.type===GGMLType.Q4_K?'Q4_K':'Q6_K';
     const module=this.device.createShaderModule({code,label:`${quantName} batch shader`});
     return this.device.createComputePipeline({layout:'auto',compute:{module,entryPoint:'main'},label:`${quantName} fused matmul (batch)`});

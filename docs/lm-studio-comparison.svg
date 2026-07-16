@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="530" viewBox="0 0 1120 530" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="700" viewBox="0 0 1120 700" role="img" aria-labelledby="title desc">
   <title id="title">Qwen3 Embedding 0.6B WebGPU versus LM Studio</title>
-  <desc id="desc">Two horizontal bar charts compare WebGPU and LM Studio at single stream and 16 simultaneous requests for exact 15, 50, and 150 token inputs.</desc>
-  <rect width="1120" height="530" fill="#0d1117"/>
+  <desc id="desc">Two horizontal bar charts compare WebGPU and LM Studio at single stream and 16 simultaneous requests for exact 15, 50, 150, 500, 1500, and 5000 token inputs.</desc>
+  <rect width="1120" height="700" fill="#0d1117"/>
   <style>
     .heading { font: 600 24px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f0f6fc; }
     .subheading { font: 600 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f0f6fc; }
@@ -17,40 +17,59 @@
   <text x="50" y="78" class="caption" text-anchor="start">Apple M3 Max, 30 core GPU</text>
   <text x="80" y="105" class="subheading" text-anchor="start">Single-stream throughput (requests/second)</text>
   <text x="650" y="105" class="subheading" text-anchor="start">16-concurrent aggregate throughput (requests/second)</text>
-  <line x1="80" y1="120" x2="80" y2="380" class="grid"/><text x="80" y="408" class="tick" text-anchor="middle">0</text><line x1="202.85714285714283" y1="120" x2="202.85714285714283" y2="380" class="grid"/><text x="202.85714285714283" y="408" class="tick" text-anchor="middle">20</text><line x1="325.71428571428567" y1="120" x2="325.71428571428567" y2="380" class="grid"/><text x="325.71428571428567" y="408" class="tick" text-anchor="middle">40</text><line x1="448.57142857142856" y1="120" x2="448.57142857142856" y2="380" class="grid"/><text x="448.57142857142856" y="408" class="tick" text-anchor="middle">60</text>
-  <line x1="650" y1="120" x2="650" y2="380" class="grid"/><text x="650" y="408" class="tick" text-anchor="middle">0</text><line x1="747.5" y1="120" x2="747.5" y2="380" class="grid"/><text x="747.5" y="408" class="tick" text-anchor="middle">70</text><line x1="845" y1="120" x2="845" y2="380" class="grid"/><text x="845" y="408" class="tick" text-anchor="middle">140</text><line x1="942.5" y1="120" x2="942.5" y2="380" class="grid"/><text x="942.5" y="408" class="tick" text-anchor="middle">210</text><line x1="1040" y1="120" x2="1040" y2="380" class="grid"/><text x="1040" y="408" class="tick" text-anchor="middle">280</text>
-  
-    <text x="64" y="168" class="row-label" text-anchor="end">15 tok</text>
+  <line x1="80" y1="120" x2="80" y2="530" class="grid"/><text x="80" y="558" class="tick" text-anchor="middle">0</text><line x1="202.85714285714283" y1="120" x2="202.85714285714283" y2="530" class="grid"/><text x="202.85714285714283" y="558" class="tick" text-anchor="middle">20</text><line x1="325.71428571428567" y1="120" x2="325.71428571428567" y2="530" class="grid"/><text x="325.71428571428567" y="558" class="tick" text-anchor="middle">40</text><line x1="448.57142857142856" y1="120" x2="448.57142857142856" y2="530" class="grid"/><text x="448.57142857142856" y="558" class="tick" text-anchor="middle">60</text>
+  <line x1="650" y1="120" x2="650" y2="530" class="grid"/><text x="650" y="558" class="tick" text-anchor="middle">0</text><line x1="747.5" y1="120" x2="747.5" y2="530" class="grid"/><text x="747.5" y="558" class="tick" text-anchor="middle">70</text><line x1="845" y1="120" x2="845" y2="530" class="grid"/><text x="845" y="558" class="tick" text-anchor="middle">140</text><line x1="942.5" y1="120" x2="942.5" y2="530" class="grid"/><text x="942.5" y="558" class="tick" text-anchor="middle">210</text><line x1="1040" y1="120" x2="1040" y2="530" class="grid"/><text x="1040" y="558" class="tick" text-anchor="middle">280</text>
+  <text x="64" y="168" class="row-label" text-anchor="end">15 tok</text>
     <rect x="80" y="132" width="177.14676993596484" height="22" rx="4" class="lm"/>
-    <rect x="80" y="160" width="410.24858202034227" height="22" rx="4" class="gpu"/>
+    <rect x="80" y="160" width="403.5512510120385" height="22" rx="4" class="gpu"/>
     <text x="265.1467699359648" y="148" class="value" text-anchor="start">28.84</text>
-    <text x="498.24858202034227" y="176" class="value" text-anchor="start">66.78</text>
+    <text x="491.5512510120385" y="176" class="value" text-anchor="start">65.69</text>
     <rect x="650" y="132" width="42.770594901076606" height="22" rx="4" class="lm"/>
-    <rect x="650" y="160" width="347.6547788040005" height="22" rx="4" class="gpu"/>
+    <rect x="650" y="160" width="333.6034951524442" height="22" rx="4" class="gpu"/>
     <text x="700.7705949010766" y="148" class="value" text-anchor="start">30.71</text>
-    <text x="1005.6547788040004" y="176" class="value" text-anchor="start">249.60</text>
-  
-    <text x="64" y="244" class="row-label" text-anchor="end">50 tok</text>
-    <rect x="80" y="208" width="157.65062573778565" height="22" rx="4" class="lm"/>
-    <rect x="80" y="236" width="256.29945313167934" height="22" rx="4" class="gpu"/>
-    <text x="245.65062573778565" y="224" class="value" text-anchor="start">25.66</text>
-    <text x="344.29945313167934" y="252" class="value" text-anchor="start">41.72</text>
-    <rect x="650" y="208" width="37.95239759710234" height="22" rx="4" class="lm"/>
-    <rect x="650" y="236" width="144.5491087055952" height="22" rx="4" class="gpu"/>
-    <text x="695.9523975971024" y="224" class="value" text-anchor="start">27.25</text>
-    <text x="802.5491087055952" y="252" class="value" text-anchor="start">103.78</text>
-  
-    <text x="64" y="320" class="row-label" text-anchor="end">150 tok</text>
-    <rect x="80" y="284" width="113.84504042081092" height="22" rx="4" class="lm"/>
-    <rect x="80" y="312" width="132.89611541444071" height="22" rx="4" class="gpu"/>
-    <text x="201.8450404208109" y="300" class="value" text-anchor="start">18.53</text>
-    <text x="220.89611541444071" y="328" class="value" text-anchor="start">21.63</text>
-    <rect x="650" y="284" width="27.031184629281938" height="22" rx="4" class="lm"/>
-    <rect x="650" y="312" width="50.94960594080736" height="22" rx="4" class="gpu"/>
-    <text x="685.0311846292819" y="300" class="value" text-anchor="start">19.41</text>
-    <text x="708.9496059408074" y="328" class="value" text-anchor="start">36.58</text>
-  
-  <rect x="80" y="430" width="16" height="16" rx="3" class="lm"/><text x="104" y="443" class="caption" text-anchor="start">LM Studio</text>
-  <rect x="220" y="430" width="16" height="16" rx="3" class="gpu"/><text x="244" y="443" class="caption" text-anchor="start">WebGPU</text>
-  <text x="50" y="486" class="caption" text-anchor="start">Measured 2026-07-16; exact token counts include EOS; WebGPU is the median of three warmed trials; no request errors.</text>
+    <text x="991.6034951524442" y="176" class="value" text-anchor="start">239.51</text><text x="64" y="234" class="row-label" text-anchor="end">50 tok</text>
+    <rect x="80" y="198" width="157.65062573778565" height="22" rx="4" class="lm"/>
+    <rect x="80" y="226" width="244.55022663782188" height="22" rx="4" class="gpu"/>
+    <text x="245.65062573778565" y="214" class="value" text-anchor="start">25.66</text>
+    <text x="332.5502266378219" y="242" class="value" text-anchor="start">39.81</text>
+    <rect x="650" y="198" width="37.95239759710234" height="22" rx="4" class="lm"/>
+    <rect x="650" y="226" width="163.09802609853" height="22" rx="4" class="gpu"/>
+    <text x="695.9523975971024" y="214" class="value" text-anchor="start">27.25</text>
+    <text x="821.09802609853" y="242" class="value" text-anchor="start">117.10</text><text x="64" y="300" class="row-label" text-anchor="end">150 tok</text>
+    <rect x="80" y="264" width="113.84504042081092" height="22" rx="4" class="lm"/>
+    <rect x="80" y="292" width="127.89758674655556" height="22" rx="4" class="gpu"/>
+    <text x="201.8450404208109" y="280" class="value" text-anchor="start">18.53</text>
+    <text x="215.89758674655556" y="308" class="value" text-anchor="start">20.82</text>
+    <rect x="650" y="264" width="27.031184629281938" height="22" rx="4" class="lm"/>
+    <rect x="650" y="292" width="57.708997203341546" height="22" rx="4" class="gpu"/>
+    <text x="685.0311846292819" y="280" class="value" text-anchor="start">19.41</text>
+    <text x="715.7089972033416" y="308" class="value" text-anchor="start">41.43</text><text x="64" y="366" class="row-label" text-anchor="end">500 tok</text>
+    <rect x="80" y="330" width="15.118008652946948" height="22" rx="4" class="lm"/>
+    <rect x="80" y="358" width="40.704895189499396" height="22" rx="4" class="gpu"/>
+    <text x="103.11800865294694" y="346" class="value" text-anchor="start">2.46</text>
+    <text x="128.70489518949938" y="374" class="value" text-anchor="start">6.63</text>
+    <rect x="650" y="330" width="4.312463985966059" height="22" rx="4" class="lm"/>
+    <rect x="650" y="358" width="16.384446329098633" height="22" rx="4" class="gpu"/>
+    <text x="662.312463985966" y="346" class="value" text-anchor="start">3.10</text>
+    <text x="674.3844463290986" y="374" class="value" text-anchor="start">11.76</text><text x="64" y="432" class="row-label" text-anchor="end">1500 tok</text>
+    <rect x="80" y="396" width="19.288507808900356" height="22" rx="4" class="lm"/>
+    <rect x="80" y="424" width="19.471257254184852" height="22" rx="4" class="gpu"/>
+    <text x="107.28850780890036" y="412" class="value" text-anchor="start">3.14</text>
+    <text x="107.47125725418485" y="440" class="value" text-anchor="start">3.17</text>
+    <rect x="650" y="396" width="4.244006220054653" height="22" rx="4" class="lm"/>
+    <rect x="650" y="424" width="4.724217017817319" height="22" rx="4" class="gpu"/>
+    <text x="662.2440062200546" y="412" class="value" text-anchor="start">3.05</text>
+    <text x="662.7242170178173" y="440" class="value" text-anchor="start">3.39</text><text x="64" y="498" class="row-label" text-anchor="end">5000 tok</text>
+    <rect x="80" y="462" width="3.733538324846877" height="22" rx="4" class="lm"/>
+    <rect x="80" y="490" width="5.805472129968649" height="22" rx="4" class="gpu"/>
+    <text x="91.73353832484688" y="478" class="value" text-anchor="start">0.61</text>
+    <text x="93.80547212996865" y="506" class="value" text-anchor="start">0.95</text>
+    <rect x="650" y="462" width="0.8244275205969905" height="22" rx="4" class="lm"/>
+    <rect x="650" y="490" width="1.3448712945227108" height="22" rx="4" class="gpu"/>
+    <text x="658.8244275205969" y="478" class="value" text-anchor="start">0.59</text>
+    <text x="659.3448712945227" y="506" class="value" text-anchor="start">0.97</text>
+  <rect x="80" y="565" width="16" height="16" rx="3" class="lm"/><text x="104" y="578" class="caption" text-anchor="start">LM Studio</text>
+  <rect x="220" y="565" width="16" height="16" rx="3" class="gpu"/><text x="244" y="578" class="caption" text-anchor="start">WebGPU</text>
+  <text x="50" y="628" class="caption" text-anchor="start">Measured 2026-07-16; exact token counts include EOS; warmed, isolated conditions; no request errors.</text>
+  <text x="50" y="654" class="caption" text-anchor="start">1500- and 5000-token WebGPU rows use a 176-token prefix plus a 432-token causal local window.</text>
 </svg>

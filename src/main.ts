@@ -268,7 +268,12 @@ runButton.addEventListener('click', async () => {
 
     if (searchParams.has('matrix')) {
       const matrixResults = [];
-      for (const exactTokens of COMPARISON_TOKEN_COUNTS) {
+      const requestedTokens = Number(searchParams.get('tokens'));
+      const matrixTokenCounts = Number.isFinite(requestedTokens) && requestedTokens > 0
+        ? COMPARISON_TOKEN_COUNTS.filter((tokens) => tokens === requestedTokens)
+        : COMPARISON_TOKEN_COUNTS;
+      if (matrixTokenCounts.length === 0) throw new Error(`unsupported matrix token count ${requestedTokens}`);
+      for (const exactTokens of matrixTokenCounts) {
         const benchmarkText = getComparisonWorkload(exactTokens).inputs[0];
         const encoded = tokenizer(benchmarkText) as unknown as { input_ids: { tolist(): number[][] } };
         const tokens = encoded.input_ids.tolist()[0].map(Number);
@@ -283,31 +288,53 @@ runButton.addEventListener('click', async () => {
         const singlePlan = runtime.createPlan(1, exactTokens);
         const singleBatch = makeExactBatch(1);
         const [reference] = await singlePlan.run(singleBatch.ids, singleBatch.lengths);
-        const singleRepeats = 10;
+        const baselineResponse = await fetch('/baseline/v1/embeddings', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ model: 'text-embedding-qwen3-embedding-0.6b', input: benchmarkText }),
+        });
+        if (!baselineResponse.ok) throw new Error(`${exactTokens}-token LM Studio comparison failed: ${baselineResponse.status}`);
+        const baselinePayload = await baselineResponse.json() as { data: Array<{ embedding: number[] }> };
+        const baselineEmbedding = baselinePayload.data[0].embedding;
+        const baselineNorm = Math.sqrt(baselineEmbedding.reduce((sum, value) => sum + value * value, 0));
+        const baselineCosine = reference.reduce((sum, value, index) => sum + value * baselineEmbedding[index], 0) / baselineNorm;
+        if (baselineCosine < 0.90) throw new Error(`${exactTokens}-token LM Studio cosine ${baselineCosine} is below 0.90`);
+        const singleRepeats = exactTokens <= 150 ? 10 : exactTokens <= 500 ? 5 : exactTokens <= 1500 ? 3 : 1;
         const singleStarted = performance.now();
         for (let repeat = 0; repeat < singleRepeats; repeat += 1) await singlePlan.run(singleBatch.ids, singleBatch.lengths);
         const singleRps = singleRepeats * 1000 / (performance.now() - singleStarted);
+        write(`${exactTokens} tokens: ${singleRps.toFixed(2)} req/s single`);
 
-        const concurrentPlan = runtime.createPlan(16, exactTokens);
-        const concurrentBatch = makeExactBatch(16);
+        const bytesPerRequestInLargestBuffer = exactTokens * 3072 * 2 * 2;
+        const longContextBatchCap = exactTokens >= 5000 ? 4 : 16;
+        const nativeBatch = Math.max(1, Math.min(longContextBatchCap, Math.floor(device.limits.maxStorageBufferBindingSize / bytesPerRequestInLargestBuffer)));
+        const concurrentPlan = runtime.createPlan(nativeBatch, exactTokens);
+        const concurrentBatch = makeExactBatch(nativeBatch);
         const warmBatch = await concurrentPlan.run(concurrentBatch.ids, concurrentBatch.lengths);
         const worstBatchCosine = Math.min(...warmBatch.map((embedding) => reference.reduce((sum, value, index) => sum + value * embedding[index], 0)));
         const cosineFloor = 0.999;
         if (worstBatchCosine < cosineFloor) throw new Error(`${exactTokens}-token batch cosine ${worstBatchCosine} is below ${cosineFloor}`);
-        const concurrentRepeats = 5;
+        const chunksPerRound = Math.ceil(16 / nativeBatch);
+        const concurrentRepeats = exactTokens <= 150 ? 5 : exactTokens <= 500 ? 3 : exactTokens <= 1500 ? 2 : 1;
         const concurrentStarted = performance.now();
-        for (let repeat = 0; repeat < concurrentRepeats; repeat += 1) await concurrentPlan.run(concurrentBatch.ids, concurrentBatch.lengths);
+        for (let repeat = 0; repeat < concurrentRepeats * chunksPerRound; repeat += 1) await concurrentPlan.run(concurrentBatch.ids, concurrentBatch.lengths);
         const aggregateRps = concurrentRepeats * 16_000 / (performance.now() - concurrentStarted);
-        const result = { exactTokens, singleRps, aggregateRps, scaling: aggregateRps / singleRps, worstBatchCosine };
+        const result = { exactTokens, singleRps, aggregateRps, scaling: aggregateRps / singleRps, baselineCosine, worstBatchCosine, nativeBatch };
         matrixResults.push(result);
-        write(`${exactTokens} tokens: ${singleRps.toFixed(2)} req/s single; ${aggregateRps.toFixed(2)} req/s at 16 concurrent; ${(aggregateRps / singleRps).toFixed(2)}× scaling`);
+        write(`${exactTokens} tokens: ${singleRps.toFixed(2)} req/s single; ${aggregateRps.toFixed(2)} req/s at 16 concurrent; ${(aggregateRps / singleRps).toFixed(2)}× scaling; LM cosine ${baselineCosine.toFixed(4)}; native batch ${nativeBatch}`);
+        singlePlan.destroy();
+        concurrentPlan.destroy();
       }
       write(`BENCHMARK_MATRIX_JSON ${JSON.stringify(matrixResults)}`);
       write('Benchmark complete');
       return;
     }
 
-    const acceptanceText = getWorkload(searchParams.has('hundred') ? 'hundred' : 'acceptance').inputs[0];
+    const requestedProfileTokens = Number(searchParams.get('tokens'));
+    const exactProfileTokens = COMPARISON_TOKEN_COUNTS.find((tokens) => tokens === requestedProfileTokens);
+    const acceptanceText = exactProfileTokens
+      ? getComparisonWorkload(exactProfileTokens).inputs[0]
+      : getWorkload(searchParams.has('hundred') ? 'hundred' : 'acceptance').inputs[0];
     const acceptanceEncoded = tokenizer(acceptanceText) as unknown as { input_ids: { tolist(): number[][] } };
     const acceptanceTokens = acceptanceEncoded.input_ids.tolist()[0].map(Number);
     if (acceptanceTokens[acceptanceTokens.length - 1] !== 151643) acceptanceTokens.push(151643);
