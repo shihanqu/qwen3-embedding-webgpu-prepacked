@@ -6,23 +6,28 @@ A high-throughput Q4 WebGPU runtime for Qwen3 Embedding 0.6B. It uses a GPU-nati
 
 ## Performance
 
-The benchmark uses identical text for both runtimes and exact tokenizer lengths including EOS. WebGPU results are medians from three warmed trials; LM Studio results use ten warmups and a 10-second measurement per condition. Model loading is excluded.
+The benchmark uses identical text for both runtimes and exact tokenizer lengths including EOS. WebGPU rows are isolated, warmed measurements; LM Studio rows use ten warmups and a 10-second measurement per condition. Model loading is excluded.
 
 | Input | LM Studio single | WebGPU single | LM Studio 16× aggregate | WebGPU 16× aggregate |
 |---:|---:|---:|---:|---:|
-| 15 tokens | 28.84 req/s | **66.78 req/s** | 30.71 req/s | **249.60 req/s** |
-| 50 tokens | 25.66 req/s | **41.72 req/s** | 27.25 req/s | **103.78 req/s** |
-| 150 tokens | 18.53 req/s | **21.63 req/s** | 19.41 req/s | **36.58 req/s** |
+| 15 tokens | 28.84 req/s | **65.69 req/s** | 30.71 req/s | **239.51 req/s** |
+| 50 tokens | 25.66 req/s | **39.81 req/s** | 27.25 req/s | **117.10 req/s** |
+| 150 tokens | 18.53 req/s | **20.82 req/s** | 19.41 req/s | **41.43 req/s** |
+| 500 tokens | 2.46 req/s | **6.63 req/s** | 3.10 req/s | **11.76 req/s** |
+| 1,500 tokens | 3.14 req/s | **3.17 req/s** | 3.05 req/s | **3.39 req/s** |
+| 5,000 tokens | 0.61 req/s | **0.95 req/s** | 0.59 req/s | **0.97 req/s** |
 
-At 16 concurrent requests, WebGPU delivers 8.13× LM Studio throughput at 15 tokens, 3.81× at 50 tokens, and 1.88× at 150 tokens.
+Every tested size exceeds the raw LM Studio endpoint in both columns. At 16 concurrent requests, WebGPU delivers 7.80×, 4.30×, 2.13×, 3.80×, 1.11×, and 1.63× LM Studio throughput from 15 through 5,000 tokens.
 
-The batch path is checked against the single-request embedding in every trial. Worst cosine agreement across the graphed trials was `0.999928` at 15 tokens, `0.999936` at 50 tokens, and `1.000000` at 150 tokens.
+Every row is compared directly with LM Studio. LM cosine agreement ranges from `0.9309` to `0.9542`; native-batch agreement with the single-request WebGPU output is at least `0.999909`.
+
+Inputs through 500 tokens use full causal attention. The 1,500- and 5,000-token rows use an accuracy-gated sparse path that retains the first 176 tokens plus a 432-token causal local window. This is not numerically identical to full attention; its measured LM cosine is `0.9505` at 1,500 tokens and `0.9441` at 5,000 tokens.
 
 ### Test hardware
 
 Apple M3 Max, 30 core GPU.
 
-Results depend on the GPU, browser, power state, and thermals. The complete measurements and trial-level values are in [`docs/benchmarks/2026-07-16-webgpu-vs-lm-studio-m3-max.json`](docs/benchmarks/2026-07-16-webgpu-vs-lm-studio-m3-max.json).
+Results depend on the GPU, browser, power state, and thermals. Run long-context rows separately: a back-to-back 5,000-token stress run can materially throttle later measurements. The complete measurements are in [`docs/benchmarks/2026-07-16-webgpu-vs-lm-studio-m3-max.json`](docs/benchmarks/2026-07-16-webgpu-vs-lm-studio-m3-max.json).
 
 ## Expected system requirements
 
@@ -42,19 +47,20 @@ The browser must allow individual WebGPU storage-buffer bindings of at least 128
 
 The runtime moves work that would normally happen during browser startup into a deterministic offline conversion step:
 
-- Q and K projection matrices are fused, as are the FFN gate and up matrices.
+- Q, K, and V projection matrices are fused, as are the FFN gate and up matrices.
 - Q4_0 projection weights are rearranged into compact 32-row GPU tiles. Each 32-value block occupies 20 bytes: one aligned scale word and four packed-quant words.
 - Token embeddings, normalization weights, metadata, and every other runtime tensor are copied into the same self-contained file.
-- The browser uploads all 254 tensors directly without parsing a GGUF, concatenating matrices, or repacking quantized blocks on the CPU.
+- The browser uploads all 226 tensors directly without parsing a GGUF, concatenating matrices, or repacking quantized blocks on the CPU.
 
 The inference path is implemented with custom WGSL rather than a general-purpose graph runtime:
 
 - A 16×16, K=64 tiled Q4 matmul path targets single-request latency.
 - A 32-row subgroup matmul path processes large request batches with weights shared across rows.
 - Fused kernels handle residual addition plus RMSNorm, Q/K normalization plus RoPE, and SwiGLU.
-- Causal attention uses tiled QK and an online-softmax value pass.
+- A 16-query × 16-key FlashAttention-style kernel keeps QK scores, block softmax, and AV accumulation in workgroup memory.
+- Long inputs use the accuracy-gated 176-token-prefix plus 432-token-local sparse attention path described above.
 - The scheduler turns simultaneous calls into native batches of up to 16 requests.
-- One attention-score workspace is reused across all 28 layers, and long-context Q/K work is split across two dispatch dimensions to stay within WebGPU limits.
+- Single-request plans own and release their activation buffers explicitly; a 5,000-token 16-request workload is executed as four native batches of four to remain within WebGPU buffer limits.
 
 Together, the prepacked layout reduces startup CPU work and the custom execution paths increase both single-stream and concurrent throughput.
 
@@ -64,7 +70,7 @@ The app loads one pinned GitHub Release asset by default:
 
 | Artifact | Contents | Size | SHA-256 |
 |---|---|---:|---|
-| [`qwen3-embedding-0.6b-q4_0-webgpu.wgpack`](https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/wgpack-v2/qwen3-embedding-0.6b-q4_0-webgpu.wgpack) | Complete Qwen3 Embedding 0.6B model: 140 compact Q4_0 projection matrices plus all 114 auxiliary tensors and required metadata | 384 MiB | [`467882…f04ce`](docs/wgpack-v2.sha256) |
+| [`qwen3-embedding-0.6b-q4_0-webgpu.wgpack`](https://github.com/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/wgpack-v3/qwen3-embedding-0.6b-q4_0-webgpu.wgpack) | Complete Qwen3 Embedding 0.6B model: 112 compact Q4_0 projection matrices plus all 114 auxiliary tensors and required metadata | 384 MiB | [`abff36…dc55`](docs/wgpack-v3.sha256) |
 
 No GGUF is downloaded or parsed during normal use. The pack header records the SHA-256 of the exact source GGUF used to build it. Model artifacts retain the upstream Apache-2.0 license; source code is MIT licensed.
 
@@ -98,11 +104,11 @@ npm run model:prepack -- \
   models/qwen3-embedding-0.6b-q4_0-webgpu.wgpack
 ```
 
-The generator is deterministic. The format consists of an 8-byte `WGPACK02` magic value, a JSON header, and 256-byte-aligned tensor payloads. Projection rows are grouped into 32-row tiles; K is grouped into 32-value Q4 blocks. Non-projection tensors retain their source bytes and GGML type. The resulting pack is 402,949,120 bytes—only 20.6 MiB (5.7%) larger than its 364 MiB source GGUF. See `src/prepacked/format.ts` and `scripts/prepack-model.ts` for the authoritative layout.
+The generator is deterministic. The format consists of an 8-byte `WGPACK02` magic value, a JSON header, and 256-byte-aligned tensor payloads. Projection rows are grouped into 32-row tiles; K is grouped into 32-value Q4 blocks. Non-projection tensors retain their source bytes and GGML type. The resulting pack is 402,945,280 bytes—only about 20.6 MiB (5.7%) larger than its 364 MiB source GGUF. See `src/prepacked/format.ts` and `scripts/prepack-model.ts` for the authoritative layout.
 
 ## Reproduce the comparison
 
-Run all three warmed WebGPU conditions in one model load:
+Run the warmed WebGPU matrix in one model load:
 
 ```text
 http://127.0.0.1:5173/?matrix=1
@@ -114,7 +120,12 @@ Run LM Studio against the same exact fixtures with independent HTTP workers:
 npm run bench:baseline -- --tokens=15  --input-index=0 --concurrency=1,16 --duration-ms=10000 --warmup=10
 npm run bench:baseline -- --tokens=50  --input-index=0 --concurrency=1,16 --duration-ms=10000 --warmup=10
 npm run bench:baseline -- --tokens=150 --input-index=0 --concurrency=1,16 --duration-ms=10000 --warmup=10
+npm run bench:baseline -- --tokens=500 --input-index=0 --concurrency=1,16 --duration-ms=10000 --warmup=10
+npm run bench:baseline -- --tokens=1500 --input-index=0 --concurrency=1,16 --duration-ms=10000 --warmup=10
+npm run bench:baseline -- --tokens=5000 --input-index=0 --concurrency=1,16 --duration-ms=10000 --warmup=10
 ```
+
+For stable long-context numbers, run `?matrix=1&tokens=1500` and `?matrix=1&tokens=5000` as separate, cooled conditions. The 5,000-token WebGPU condition uses native batches of four and issues four chunks per 16-request round.
 
 Regenerate the checked-in chart from the benchmark JSON:
 

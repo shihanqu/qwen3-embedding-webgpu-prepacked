@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 interface Row {
   tokens: number;
-  webgpuMedian: { singleRps: number; concurrency16AggregateRps: number };
+  webgpu: { singleRps: number; concurrency16AggregateRps: number };
   lmStudio: { singleRps: number; concurrency16AggregateRps: number };
 }
 
@@ -17,9 +17,9 @@ const inputPath = resolve('docs/benchmarks/2026-07-16-webgpu-vs-lm-studio-m3-max
 const outputPath = resolve('docs/lm-studio-comparison.svg');
 const data = JSON.parse(readFileSync(inputPath, 'utf8')) as BenchmarkData;
 const width = 1120;
-const height = 530;
-const left = { x: 80, y: 120, width: 430, height: 260 };
-const right = { x: 650, y: 120, width: 390, height: 260 };
+const height = 700;
+const left = { x: 80, y: 120, width: 430, height: 410 };
+const right = { x: 650, y: 120, width: 390, height: 410 };
 const singleMax = 70;
 const concurrentMax = 280;
 
@@ -33,29 +33,29 @@ function grid(panel: typeof left, maximum: number, ticks: number[]): string {
   }).join('');
 }
 
-const rowHeight = 76;
+const rowHeight = 66;
 const marks = data.rows.map((row, index) => {
   const y = left.y + index * rowHeight + 12;
   const lmSingleWidth = (row.lmStudio.singleRps / singleMax) * left.width;
-  const gpuSingleWidth = (row.webgpuMedian.singleRps / singleMax) * left.width;
+  const gpuSingleWidth = (row.webgpu.singleRps / singleMax) * left.width;
   const lmConcurrentWidth = (row.lmStudio.concurrency16AggregateRps / concurrentMax) * right.width;
-  const gpuConcurrentWidth = (row.webgpuMedian.concurrency16AggregateRps / concurrentMax) * right.width;
+  const gpuConcurrentWidth = (row.webgpu.concurrency16AggregateRps / concurrentMax) * right.width;
   return `
     ${text(left.x - 16, y + 36, `${row.tokens} tok`, 'row-label', 'end')}
     <rect x="${left.x}" y="${y}" width="${lmSingleWidth}" height="22" rx="4" class="lm"/>
     <rect x="${left.x}" y="${y + 28}" width="${gpuSingleWidth}" height="22" rx="4" class="gpu"/>
     ${text(left.x + lmSingleWidth + 8, y + 16, row.lmStudio.singleRps.toFixed(2), 'value')}
-    ${text(left.x + gpuSingleWidth + 8, y + 44, row.webgpuMedian.singleRps.toFixed(2), 'value')}
+    ${text(left.x + gpuSingleWidth + 8, y + 44, row.webgpu.singleRps.toFixed(2), 'value')}
     <rect x="${right.x}" y="${y}" width="${lmConcurrentWidth}" height="22" rx="4" class="lm"/>
     <rect x="${right.x}" y="${y + 28}" width="${gpuConcurrentWidth}" height="22" rx="4" class="gpu"/>
     ${text(right.x + lmConcurrentWidth + 8, y + 16, row.lmStudio.concurrency16AggregateRps.toFixed(2), 'value')}
-    ${text(right.x + gpuConcurrentWidth + 8, y + 44, row.webgpuMedian.concurrency16AggregateRps.toFixed(2), 'value')}
-  `;
+    ${text(right.x + gpuConcurrentWidth + 8, y + 44, row.webgpu.concurrency16AggregateRps.toFixed(2), 'value')}
+  `.trim();
 }).join('');
 
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title desc">
   <title id="title">Qwen3 Embedding 0.6B WebGPU versus LM Studio</title>
-  <desc id="desc">Two horizontal bar charts compare WebGPU and LM Studio at single stream and 16 simultaneous requests for exact 15, 50, and 150 token inputs.</desc>
+  <desc id="desc">Two horizontal bar charts compare WebGPU and LM Studio at single stream and 16 simultaneous requests for exact 15, 50, 150, 500, 1500, and 5000 token inputs.</desc>
   <rect width="${width}" height="${height}" fill="#0d1117"/>
   <style>
     .heading { font: 600 24px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #f0f6fc; }
@@ -75,9 +75,10 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${
   ${grid(left, singleMax, [0, 20, 40, 60])}
   ${grid(right, concurrentMax, [0, 70, 140, 210, 280])}
   ${marks}
-  <rect x="80" y="430" width="16" height="16" rx="3" class="lm"/>${text(104, 443, 'LM Studio', 'caption')}
-  <rect x="220" y="430" width="16" height="16" rx="3" class="gpu"/>${text(244, 443, 'WebGPU', 'caption')}
-  ${text(50, 486, `Measured ${data.date}; exact token counts include EOS; WebGPU is the median of three warmed trials; no request errors.`, 'caption')}
+  <rect x="80" y="565" width="16" height="16" rx="3" class="lm"/>${text(104, 578, 'LM Studio', 'caption')}
+  <rect x="220" y="565" width="16" height="16" rx="3" class="gpu"/>${text(244, 578, 'WebGPU', 'caption')}
+  ${text(50, 628, `Measured ${data.date}; exact token counts include EOS; warmed, isolated conditions; no request errors.`, 'caption')}
+  ${text(50, 654, '1500- and 5000-token WebGPU rows use a 176-token prefix plus a 432-token causal local window.', 'caption')}
 </svg>\n`;
 
 writeFileSync(outputPath, svg);

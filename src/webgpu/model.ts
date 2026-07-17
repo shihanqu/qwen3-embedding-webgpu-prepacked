@@ -23,8 +23,7 @@ const EPSILON = 1e-6;
 const ROPE_THETA = 1_000_000;
 
 interface LayerRuns {
-  qk: QuantMatmulRun;
-  v: QuantMatmulRun;
+  qkv: QuantMatmulRun;
   qkRope: EncodableRun;
   attention: AttentionRun;
   attentionOutput: QuantMatmulRun;
@@ -48,6 +47,7 @@ function isPrepackedModel(model: GGUFModel | PrepackedModel): model is Prepacked
 }
 
 export class Qwen3ExecutionPlan {
+  readonly ownedBuffers: GPUBuffer[] = [];
   readonly tokenIds: GPUBuffer;
   readonly lengths: GPUBuffer;
   readonly embeddings: GPUBuffer;
@@ -60,32 +60,39 @@ export class Qwen3ExecutionPlan {
   constructor(readonly model: Qwen3WebGPUModel, readonly batch: number, readonly sequence: number) {
     const { device } = model;
     const tokens = batch * sequence;
-    this.tokenIds = activationBuffer(device, tokens * 2, 'token ids'); // u32: f16 helper sizing => tokens*4 bytes
-    this.lengths = activationBuffer(device, batch * 2, 'sequence lengths');
-    const x = activationBuffer(device, tokens * HIDDEN, 'residual stream');
-    const noResidual = activationBuffer(device, tokens * HIDDEN, 'unused residual');
-    const normalized = activationBuffer(device, tokens * HIDDEN, 'normalized hidden state');
-    const qkRaw = activationBuffer(device, tokens * (Q_WIDTH + HIDDEN), 'query + key raw');
-    const q = activationBuffer(device, tokens * Q_WIDTH, 'query rope');
-    const k = activationBuffer(device, tokens * HIDDEN, 'key rope');
-    const v = activationBuffer(device, tokens * HIDDEN, 'value');
-    const attention = activationBuffer(device, tokens * Q_WIDTH, 'attention');
-    const delta = activationBuffer(device, tokens * HIDDEN, 'residual delta');
-    const gateUp = activationBuffer(device, tokens * INTERMEDIATE * 2, 'FFN gate + up');
-    const ffn = activationBuffer(device, tokens * INTERMEDIATE, 'SwiGLU output');
-    const attentionScores = activationBuffer(device, batch * 16 * sequence * sequence, 'shared attention score workspace');
-    this.embeddings = activationBuffer(device, batch * HIDDEN, 'embeddings', true);
+    const activation=(elements:number,label:string,f32=false)=>{const buffer=activationBuffer(device,elements,label,f32);this.ownedBuffers.push(buffer);return buffer;};
+    this.tokenIds = activation(tokens * 2, 'token ids'); // u32: f16 helper sizing => tokens*4 bytes
+    this.lengths = activation(batch * 2, 'sequence lengths');
+    const x = activation(tokens * HIDDEN, 'residual stream');
+    const noResidual = activation(tokens * HIDDEN, 'unused residual');
+    const normalized = activation(tokens * HIDDEN, 'normalized hidden state');
+    const qkvRaw = activation(tokens * (Q_WIDTH + HIDDEN * 2), 'query + key + value raw');
+    const q = activation(tokens * Q_WIDTH, 'query rope');
+    const k = activation(tokens * HIDDEN, 'key rope');
+    const attention = activation(tokens * Q_WIDTH, 'attention');
+    const delta = activation(tokens * HIDDEN, 'residual delta');
+    const gateUp = activation(tokens * INTERMEDIATE * 2, 'FFN gate + up');
+    const ffn = activation(tokens * INTERMEDIATE, 'SwiGLU output');
+    const ropeValues = new Float32Array(sequence * 64 * 2);
+    for (let position = 0; position < sequence; position += 1) for (let dimension = 0; dimension < 64; dimension += 1) {
+      const angle = position * Math.pow(ROPE_THETA, -dimension / 64);
+      const offset = (position * 64 + dimension) * 2;
+      ropeValues[offset] = Math.cos(angle); ropeValues[offset + 1] = Math.sin(angle);
+    }
+    const ropeTable = createBufferWithData(device, ropeValues, GPUBufferUsage.STORAGE, 'RoPE sin/cos table');
+    this.ownedBuffers.push(ropeTable);
+    this.embeddings = activation(batch * HIDDEN, 'embeddings', true);
     this.readback = device.createBuffer({ size: batch * HIDDEN * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ, label: 'embedding readback' });
+    this.ownedBuffers.push(this.readback);
 
     this.initialEmbedding = model.embedding.createRun(this.tokenIds, model.weight('token_embd.weight'), x, tokens);
     this.initialNorm = model.rmsNorm.createRun(x, noResidual, model.weight('blk.0.attn_norm.weight'), normalized, tokens, HIDDEN, EPSILON, false);
 
     for (let layer = 0; layer < LAYERS; layer += 1) {
       const prefix = `blk.${layer}`;
-      const qkRun = model.matmul(normalized, `${prefix}.attn_qk.weight`, tokens, qkRaw);
-      const vRun = model.matmul(normalized, `${prefix}.attn_v.weight`, tokens, v);
-      const qkRope = model.qkNormRope.createRun(qkRaw, model.weight(`${prefix}.attn_q_norm.weight`), model.weight(`${prefix}.attn_k_norm.weight`), q, k, tokens, sequence, EPSILON, ROPE_THETA);
-      const attentionRun = model.attention.createRun(q, k, v, attention, batch, sequence, 16, 8, 1024, 0, attentionScores);
+      const qkvRun = model.matmul(normalized, `${prefix}.attn_qkv.weight`, tokens, qkvRaw);
+      const qkRope = model.qkNormRope.createRun(qkvRaw, model.weight(`${prefix}.attn_q_norm.weight`), model.weight(`${prefix}.attn_k_norm.weight`), q, k, tokens, sequence, EPSILON, ropeTable, 4096);
+      const attentionRun = model.attention.createRun(q, k, qkvRaw, attention, batch, sequence, 16, 8, 4096, 3072);
       const attentionOutput = model.matmul(attention, `${prefix}.attn_output.weight`, tokens, delta);
       const postAttentionNorm = model.rmsNorm.createRun(x, delta, model.weight(`${prefix}.ffn_norm.weight`), normalized, tokens, HIDDEN, EPSILON, true);
       const gateUpRun = model.matmul(normalized, `${prefix}.ffn_gate_up.weight`, tokens, gateUp);
@@ -93,9 +100,14 @@ export class Qwen3ExecutionPlan {
       const nextNormName = layer + 1 < LAYERS ? `blk.${layer + 1}.attn_norm.weight` : 'output_norm.weight';
       const downRun = model.matmul(ffn, `${prefix}.ffn_down.weight`, tokens, delta);
       const postFfnNorm = model.rmsNorm.createRun(x, delta, model.weight(nextNormName), normalized, tokens, HIDDEN, EPSILON, true);
-      this.layers.push({ qk: qkRun, v: vRun, qkRope, attention: attentionRun, attentionOutput, postAttentionNorm, gateUp: gateUpRun, swiglu, down: downRun, postFfnNorm });
+      this.layers.push({ qkv: qkvRun, qkRope, attention: attentionRun, attentionOutput, postAttentionNorm, gateUp: gateUpRun, swiglu, down: downRun, postFfnNorm });
     }
     this.pool = model.pool.createRun(normalized, this.lengths, this.embeddings, batch, sequence);
+  }
+
+  destroy():void{
+    for(const layer of this.layers)for(const buffer of layer.attention.ownedBuffers)buffer.destroy();
+    for(const buffer of this.ownedBuffers)buffer.destroy();
   }
 
   async run(ids: Uint32Array, sequenceLengths: Uint32Array): Promise<Float32Array[]> {
@@ -107,8 +119,7 @@ export class Qwen3ExecutionPlan {
     encodeRun(pass, this.initialEmbedding);
     encodeRun(pass, this.initialNorm);
     for (const layer of this.layers) {
-      this.model.kernelFor(layer.qk).encode(pass, layer.qk);
-      this.model.kernelFor(layer.v).encode(pass, layer.v);
+      this.model.kernelFor(layer.qkv).encode(pass, layer.qkv);
       encodeRun(pass, layer.qkRope); this.model.attention.encode(pass, layer.attention);
       this.model.kernelFor(layer.attentionOutput).encode(pass, layer.attentionOutput);
       encodeRun(pass, layer.postAttentionNorm);
@@ -146,7 +157,7 @@ export class Qwen3ExecutionPlan {
     };
     stage('embedding_norm', (pass) => { encodeRun(pass, this.initialEmbedding); encodeRun(pass, this.initialNorm); });
     for (const layer of this.layers) {
-      stage('qkv', (pass) => { this.model.kernelFor(layer.qk).encode(pass, layer.qk); this.model.kernelFor(layer.v).encode(pass, layer.v); });
+      stage('qkv', (pass) => this.model.kernelFor(layer.qkv).encode(pass, layer.qkv));
       stage('rope_attention', (pass) => { encodeRun(pass, layer.qkRope); this.model.attention.encode(pass, layer.attention); });
       stage('attention_output', (pass) => this.model.kernelFor(layer.attentionOutput).encode(pass, layer.attentionOutput));
       stage('post_attention_norm', (pass) => encodeRun(pass, layer.postAttentionNorm));
@@ -209,7 +220,7 @@ export class Qwen3WebGPUModel {
         });
         if (tensor.storage === PREPACKED_STORAGE_COMPACT) this.prepackedNames.add(tensor.name);
       }
-      if (this.prepackedNames.size !== LAYERS * 5) throw new Error(`prepacked model has ${this.prepackedNames.size} compact matrices; expected ${LAYERS * 5}`);
+      if (this.prepackedNames.size !== LAYERS * 4) throw new Error(`prepacked model has ${this.prepackedNames.size} compact matrices; expected ${LAYERS * 4}`);
       return;
     }
 
@@ -219,19 +230,21 @@ export class Qwen3WebGPUModel {
       this.weights.set(tensor.name, createBufferWithData(device, bytes, GPUBufferUsage.STORAGE, tensor.name));
       this.tensorInfo.set(tensor.name, tensor);
     }
-    const combineQ4 = (name: string, firstName: string, secondName: string) => {
-      const first = gguf.tensors.get(firstName); const second = gguf.tensors.get(secondName);
-      if (!first || !second || first.type !== second.type || (first.type !== GGMLType.Q4_K && first.type !== GGMLType.Q4_0) || first.dimensions[0] !== second.dimensions[0]) {
-        throw new Error(`cannot combine ${firstName} and ${secondName}`);
+    const combineQ4 = (name: string, ...sourceNames: string[]) => {
+      const sources = sourceNames.map((sourceName) => gguf.tensors.get(sourceName));
+      const first = sources[0];
+      if (!first || sources.some((tensor) => !tensor || tensor.type !== first.type || (tensor.type !== GGMLType.Q4_K && tensor.type !== GGMLType.Q4_0) || tensor.dimensions[0] !== first.dimensions[0])) {
+        throw new Error(`cannot combine ${sourceNames.join(', ')}`);
       }
-      const bytes = new Uint8Array(first.byteLength + second.byteLength);
-      bytes.set(new Uint8Array(gguf.buffer, first.byteOffset, first.byteLength));
-      bytes.set(new Uint8Array(gguf.buffer, second.byteOffset, second.byteLength), first.byteLength);
+      const tensors = sources as GGUFTensorInfo[];
+      const bytes = new Uint8Array(tensors.reduce((sum, tensor) => sum + tensor.byteLength, 0));
+      let byteOffset = 0;
+      for (const tensor of tensors) { bytes.set(new Uint8Array(gguf.buffer, tensor.byteOffset, tensor.byteLength), byteOffset); byteOffset += tensor.byteLength; }
       this.weights.set(name, createBufferWithData(device, bytes, GPUBufferUsage.STORAGE, name));
-      this.tensorInfo.set(name, { name, dimensions: [first.dimensions[0], first.dimensions[1] + second.dimensions[1]], type: first.type, offset: 0, byteOffset: 0, byteLength: bytes.byteLength, elementCount: first.elementCount + second.elementCount });
+      this.tensorInfo.set(name, { name, dimensions: [first.dimensions[0], tensors.reduce((sum, tensor) => sum + tensor.dimensions[1], 0)], type: first.type, offset: 0, byteOffset: 0, byteLength: bytes.byteLength, elementCount: tensors.reduce((sum, tensor) => sum + tensor.elementCount, 0) });
     };
     for (let layer = 0; layer < LAYERS; layer += 1) {
-      combineQ4(`blk.${layer}.attn_qk.weight`, `blk.${layer}.attn_q.weight`, `blk.${layer}.attn_k.weight`);
+      combineQ4(`blk.${layer}.attn_qkv.weight`, `blk.${layer}.attn_q.weight`, `blk.${layer}.attn_k.weight`, `blk.${layer}.attn_v.weight`);
       combineQ4(`blk.${layer}.ffn_gate_up.weight`, `blk.${layer}.ffn_gate.weight`, `blk.${layer}.ffn_up.weight`);
     }
   }

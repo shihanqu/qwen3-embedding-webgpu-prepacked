@@ -16,7 +16,7 @@ const prepackedModelProxy = () => ({
   followRedirects: true,
   rewrite: (path: string) => path.replace(
     /^\/prepacked-release/,
-    '/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/wgpack-v2',
+    '/shihanqu/qwen3-embedding-webgpu-prepacked/releases/download/wgpack-v3',
   ),
 });
 

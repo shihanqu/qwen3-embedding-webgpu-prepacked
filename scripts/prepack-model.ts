@@ -34,8 +34,7 @@ function part(name: string): Q40TensorPart {
 const packed = [];
 for (let layer = 0; layer < 28; layer += 1) {
   const prefix = `blk.${layer}`;
-  packed.push(packQ40Tile32(`${prefix}.attn_qk.weight`, [part(`${prefix}.attn_q.weight`), part(`${prefix}.attn_k.weight`)]));
-  packed.push(packQ40Tile32(`${prefix}.attn_v.weight`, [part(`${prefix}.attn_v.weight`)]));
+  packed.push(packQ40Tile32(`${prefix}.attn_qkv.weight`, [part(`${prefix}.attn_q.weight`), part(`${prefix}.attn_k.weight`), part(`${prefix}.attn_v.weight`)]));
   packed.push(packQ40Tile32(`${prefix}.attn_output.weight`, [part(`${prefix}.attn_output.weight`)]));
   packed.push(packQ40Tile32(`${prefix}.ffn_gate_up.weight`, [part(`${prefix}.ffn_gate.weight`), part(`${prefix}.ffn_up.weight`)]));
   packed.push(packQ40Tile32(`${prefix}.ffn_down.weight`, [part(`${prefix}.ffn_down.weight`)]));

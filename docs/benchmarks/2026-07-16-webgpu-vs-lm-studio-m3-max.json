@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "date": "2026-07-16",
   "testedHardware": "Apple M3 Max, 30 core GPU",
   "software": {
@@ -12,41 +12,49 @@
   "method": {
     "tokenCountsIncludeEos": true,
     "sameTextForBothRuntimes": true,
-    "webgpu": "Three trials; each trial warms every plan, measures 10 single requests and five native 16-request batches, and excludes model load time. Graphed values are medians.",
+    "webgpu": "One isolated warmed measurement per condition, excluding model load time. Repeats are adaptive: 10/5 at 15-150 tokens, 5/3 at 500, 3/2 at 1500, and 1/1 at 5000 for single/16-concurrent measurements. Long-context conditions are run separately to avoid heat from a preceding 5000-token stress run.",
     "lmStudio": "Ten warmup requests followed by a 10-second measurement at each condition. Concurrency 16 uses 16 independent HTTP workers.",
     "lmStudioEndpoint": "http://127.0.0.1:1234/v1/embeddings",
+    "accuracy": "Every WebGPU row is compared directly with LM Studio; cosine agreement must be at least 0.90. Native-batch agreement with the single-request WebGPU output must be at least 0.999.",
+    "longContextAttention": "Inputs above 608 tokens use exact-token prefix-plus-local sparse attention: 176 prefix tokens and a 432-token causal local window.",
     "errors": 0
   },
   "rows": [
     {
       "tokens": 15,
-      "webgpuTrials": [
-        { "singleRps": 66.78465288703246, "concurrency16AggregateRps": 249.59830273107727, "worstBatchCosine": 0.9999276388568994 },
-        { "singleRps": 67.08032869226956, "concurrency16AggregateRps": 251.03552153239983, "worstBatchCosine": 0.9999276388568994 },
-        { "singleRps": 66.37461834752007, "concurrency16AggregateRps": 245.53434411054403, "worstBatchCosine": 0.9999276388568994 }
-      ],
-      "webgpuMedian": { "singleRps": 66.78465288703246, "concurrency16AggregateRps": 249.59830273107727, "scaling": 3.7373601859289085 },
+      "attention": "full causal",
+      "webgpu": { "singleRps": 65.69438969963417, "concurrency16AggregateRps": 239.5102016479087, "scaling": 3.6458242894559145, "lmStudioCosine": 0.9542077814329825, "worstBatchCosine": 0.9999216956357355, "nativeBatch": 16 },
       "lmStudio": { "singleRps": 28.83784626864544, "concurrency16AggregateRps": 30.70709377513192, "singleRequests": 289, "concurrency16Requests": 322 }
     },
     {
       "tokens": 50,
-      "webgpuTrials": [
-        { "singleRps": 41.48172729779141, "concurrency16AggregateRps": 103.77884727581193, "worstBatchCosine": 0.999935973247818 },
-        { "singleRps": 42.4935197385628, "concurrency16AggregateRps": 104.20940880667402, "worstBatchCosine": 0.999935973247818 },
-        { "singleRps": 41.72316678887804, "concurrency16AggregateRps": 103.4172952502331, "worstBatchCosine": 0.999935973247818 }
-      ],
-      "webgpuMedian": { "singleRps": 41.72316678887804, "concurrency16AggregateRps": 103.77884727581193, "scaling": 2.487319522052094 },
+      "attention": "full causal",
+      "webgpu": { "singleRps": 39.810502010808214, "concurrency16AggregateRps": 117.09601873740617, "scaling": 2.941334894636988, "lmStudioCosine": 0.9309167330963967, "worstBatchCosine": 0.9999088379005283, "nativeBatch": 16 },
       "lmStudio": { "singleRps": 25.664055352662782, "concurrency16AggregateRps": 27.247875197919626, "singleRequests": 257, "concurrency16Requests": 288 }
     },
     {
       "tokens": 150,
-      "webgpuTrials": [
-        { "singleRps": 21.67880679841779, "concurrency16AggregateRps": 36.60841352877901, "worstBatchCosine": 1.0000000227667392 },
-        { "singleRps": 21.634251346536864, "concurrency16AggregateRps": 36.381910004866896, "worstBatchCosine": 1.0000000227667392 },
-        { "singleRps": 21.388544296056978, "concurrency16AggregateRps": 36.57920426519503, "worstBatchCosine": 1.0000000227667392 }
-      ],
-      "webgpuMedian": { "singleRps": 21.634251346536864, "concurrency16AggregateRps": 36.57920426519503, "scaling": 1.690800558765372 },
+      "attention": "full causal",
+      "webgpu": { "singleRps": 20.820537377346255, "concurrency16AggregateRps": 41.43210055624522, "scaling": 1.9899630737353269, "lmStudioCosine": 0.9539613100799611, "worstBatchCosine": 0.9999300237562687, "nativeBatch": 16 },
       "lmStudio": { "singleRps": 18.532913556876196, "concurrency16AggregateRps": 19.407004349228057, "singleRequests": 186, "concurrency16Requests": 210 }
+    },
+    {
+      "tokens": 500,
+      "attention": "full causal",
+      "webgpu": { "singleRps": 6.626378286662693, "concurrency16AggregateRps": 11.763192236275941, "scaling": 1.775206866766484, "lmStudioCosine": 0.9521745574991718, "worstBatchCosine": 0.9999217952181948, "nativeBatch": 16 },
+      "lmStudio": { "singleRps": 2.461071176061131, "concurrency16AggregateRps": 3.09612798992435, "singleRequests": 25, "concurrency16Requests": 51 }
+    },
+    {
+      "tokens": 1500,
+      "attention": "176-token prefix + 432-token local window",
+      "webgpu": { "singleRps": 3.1697395530068366, "concurrency16AggregateRps": 3.3917455512534596, "scaling": 1.070039192348162, "lmStudioCosine": 0.9504763164854962, "worstBatchCosine": 1.0000000180098794, "nativeBatch": 16 },
+      "lmStudio": { "singleRps": 3.1399896433093604, "concurrency16AggregateRps": 3.046978824654623, "singleRequests": 32, "concurrency16Requests": 46 }
+    },
+    {
+      "tokens": 5000,
+      "attention": "176-token prefix + 432-token local window",
+      "webgpu": { "singleRps": 0.9450768583669894, "concurrency16AggregateRps": 0.9655486217086129, "scaling": 1.0216614798684172, "lmStudioCosine": 0.9441012278124411, "worstBatchCosine": 1.0000000302007321, "nativeBatch": 4 },
+      "lmStudio": { "singleRps": 0.6077853086960033, "concurrency16AggregateRps": 0.5918966814542497, "singleRequests": 7, "concurrency16Requests": 21 }
     }
   ]
 }
