@@ -2,6 +2,9 @@
 
 A high-throughput Q4 WebGPU runtime for Qwen3 Embedding 0.6B. It uses a GPU-native prepacked model format, custom WGSL kernels, and native micro-batching for up to 16 simultaneous embedding requests.
 
+> [!IMPORTANT]
+> This repository is no longer maintained. Continued development has moved to [shihanqu/nemotron-3-embed-webgpu](https://github.com/shihanqu/nemotron-3-embed-webgpu). Use that repository for current releases, updates, and support.
+
 ![Qwen3 Embedding WebGPU versus LM Studio](docs/lm-studio-comparison.svg)
 
 ## Performance
